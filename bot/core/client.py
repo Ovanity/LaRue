@@ -28,14 +28,14 @@ async def on_ready():
     guild_obj = discord.Object(id=settings.guild_id) if settings.guild_id else None
     try:
         from bot.modules.system.health import setup_system
-        from bot.modules.admin.reset import setup_admin
+        from bot.modules.admin.admin import setup_admin
         from bot.modules.rp.start import setup_start
         from bot.modules.rp.economy import setup_economy
 
         setup_system(tree, storage, settings.guild_id)  # module système existant (/ping, /stats)
         setup_start(tree, guild_obj)                    # /start
         setup_economy(tree, guild_obj)                  # /ruelle mendier|fouiller
-        setup_admin(tree, storage, settings.guild_id)   # reset la bdd en admin
+        setup_admin(tree, guild_obj)   # reset la bdd en admin
 
         # 2) Sync (guild = instantané, global = propagation plus lente)
         if guild_obj:
