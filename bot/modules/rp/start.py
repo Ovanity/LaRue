@@ -17,7 +17,7 @@ PALETTE = [
 WELCOME_TITLE = "🌆 **Bienvenue dans LaRue.exe**"
 WELCOME_INTRO = (
     "🖥️ **Mode Survie Activé**\n"
-    "Wesh mon reuf, t’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton.\n"
+    "Wesh {mention}, t’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton.\n"
     "T’es direct dans **la sauce**."
 )
 WELCOME_RULES = (
@@ -122,11 +122,15 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         color = PALETTE[inter.user.id % len(PALETTE)]
 
         embed = Embed(
-            title=f"🌆 Bienvenue dans LaRue.exe <@{inter.user.id}>",
+            title=f"🌆 Bienvenue dans LaRue.exe **{inter.user.display_name}**",
             color=color
         )
         # Une seule colonne claire + espace entre sections
-        embed.add_field(name="Introduction", value=WELCOME_INTRO + "\n\u200b", inline=False)
+        embed.add_field(
+            name="Introduction",
+            value=WELCOME_INTRO.format(mention=inter.user.mention) + "\n\u200b",
+            inline=False
+        )
         embed.add_field(name="Code de LaRue.exe", value=WELCOME_RULES + "\n\u200b", inline=False)
         embed.add_field(name="Tips", value=WELCOME_HINTS, inline=False)
         embed.set_footer(text="Choisis une action pour commencer • LaRue.exe")
