@@ -4,13 +4,13 @@ import discord
 from discord import app_commands, Interaction
 
 def setup_economy(tree: app_commands.CommandTree, guild_obj: discord.Object | None):
-    # Déclare un groupe /ruelle
-    ruelle = app_commands.Group(
-        name="ruelle",
+    # Déclare un groupe /hess
+    hess = app_commands.Group(
+        name="hess",
         description="La débrouille: mendier, fouiller, survivre."
     )
 
-    @ruelle.command(name="mendier", description="Gagne quelques pièces")
+    @hess.command(name="mendier", description="Gagne quelques pièces")
     async def mendier(inter: Interaction):
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
@@ -24,7 +24,7 @@ def setup_economy(tree: app_commands.CommandTree, guild_obj: discord.Object | No
             pp = storage.update_player(inter.user.id, money=p["money"] + gain)
         await inter.response.send_message(f"Tu tends la main… +{gain}€. Total {pp['money']}€")
 
-    @ruelle.command(name="fouiller", description="Fouille une poubelle")
+    @hess.command(name="fouiller", description="Fouille une poubelle")
     async def fouiller(inter: Interaction):
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
@@ -51,6 +51,6 @@ def setup_economy(tree: app_commands.CommandTree, guild_obj: discord.Object | No
 
     # Enregistrer le groupe sur le tree (scopé guild si fourni)
     if guild_obj:
-        tree.add_command(ruelle, guild=guild_obj)
+        tree.add_command(hess, guild=guild_obj)
     else:
-        tree.add_command(ruelle)
+        tree.add_command(hess)
