@@ -10,25 +10,37 @@ from zoneinfo import ZoneInfo
 # ───────── Types de données
 class Player(TypedDict, total=False):
     has_started: bool
-    money: int
+    money: int  # en centimes
 
 # ───────── Interface
 class Storage:
+    # joueurs
     def get_player(self, user_id: int) -> Player: ...
     def update_player(self, user_id: int, **fields) -> Player: ...
     def add_money(self, user_id: int, amount: int) -> Player: ...
     def top_richest(self, limit: int = 10) -> list[tuple[str, int]]: ...
-    # --- nouveaux helpers (optionnels pour le reste du code)
-    def get_money(self, user_id: int) -> int: ...
-    def try_spend(self, user_id: int, amount: int) -> bool: ...
+    def count_players(self) -> int: ...
+
+    # inventaire
     def get_inventory(self, user_id: int) -> dict[str, int]: ...
     def add_item(self, user_id: int, item_id: str, qty: int = 1) -> None: ...
-    # cooldowns
+    def get_money(self, user_id: int) -> int: ...
+    def try_spend(self, user_id: int, amount: int) -> bool: ...
+
+    # cooldowns / quotas
     def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[bool, int, int]: ...
     def get_action_state(self, user_id: int, action: str) -> dict: ...
+
+    # stats (NOUVEAU)
+    def increment_stat(self, user_id: int, key: str, delta: int = 1) -> int: ...
+    def get_stat(self, user_id: int, key: str, default: int = 0) -> int: ...
+    def get_stats(self, user_id: int) -> dict[str, int]: ...
+
     # admin
     def reset_players(self) -> None: ...
     def reset_actions(self) -> None: ...
+    def reset_inventory(self) -> None: ...
+    def reset_stats(self) -> None: ...
 
 # ───────── Implémentation SQLite
 class SQLiteStorage(Storage):
@@ -75,13 +87,23 @@ class SQLiteStorage(Storage):
             """)
             con.execute("CREATE INDEX IF NOT EXISTS idx_actions_day ON actions(day);")
 
-            # Inventaire (pour le shop & les boosts)
+            # Inventaire
             con.execute("""
                 CREATE TABLE IF NOT EXISTS inventory (
                     user_id TEXT NOT NULL,
                     item_id TEXT NOT NULL,
                     qty     INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (user_id, item_id)
+                );
+            """)
+
+            # Stats (NOUVEAU) — pour compter les usages, paliers, etc.
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS stats (
+                    user_id TEXT NOT NULL,
+                    key     TEXT NOT NULL,
+                    value   INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, key)
                 );
             """)
 
@@ -252,7 +274,32 @@ class SQLiteStorage(Storage):
             con.execute("UPDATE players SET money = money - ? WHERE user_id=?", (amt, uid))
         return True
 
-    # ── Admin helpers (pour /admin reset)
+    # ── Stats (paliers / progression)
+    def increment_stat(self, user_id: int, key: str, delta: int = 1) -> int:
+        """Incrémente et retourne la nouvelle valeur."""
+        uid = str(user_id)
+        d = int(delta)
+        with self._conn() as con:
+            con.execute("""
+                INSERT INTO stats(user_id, key, value) VALUES(?, ?, ?)
+                ON CONFLICT(user_id, key) DO UPDATE SET value = value + excluded.value
+            """, (uid, key, d))
+            (val,) = con.execute("SELECT value FROM stats WHERE user_id=? AND key=?", (uid, key)).fetchone()
+        return int(val)
+
+    def get_stat(self, user_id: int, key: str, default: int = 0) -> int:
+        uid = str(user_id)
+        with self._conn() as con:
+            row = con.execute("SELECT value FROM stats WHERE user_id=? AND key=?", (uid, key)).fetchone()
+        return int(row[0]) if row else int(default)
+
+    def get_stats(self, user_id: int) -> dict[str, int]:
+        uid = str(user_id)
+        with self._conn() as con:
+            rows = con.execute("SELECT key, value FROM stats WHERE user_id=?", (uid,)).fetchall()
+        return {k: int(v) for (k, v) in rows}
+
+    # ── Admin helpers
     def reset_players(self) -> None:
         with self._conn() as con:
             con.execute("DELETE FROM players;")
@@ -260,3 +307,11 @@ class SQLiteStorage(Storage):
     def reset_actions(self) -> None:
         with self._conn() as con:
             con.execute("DELETE FROM actions;")
+
+    def reset_inventory(self) -> None:
+        with self._conn() as con:
+            con.execute("DELETE FROM inventory;")
+
+    def reset_stats(self) -> None:
+        with self._conn() as con:
+            con.execute("DELETE FROM stats;")

@@ -17,7 +17,6 @@ FOUILLER_DAILY_CAP  = 1               # 1/jour
 # Gains/pertes (centimes)
 MENDIER_MIN_CENTS = 5      # 0,05€
 MENDIER_MAX_CENTS = 80     # 0,80€
-
 FOUILLER_GOOD_MIN = 50     # 0,50€
 FOUILLER_GOOD_MAX = 300    # 3,00€
 FOUILLER_BAD_LOSS = 100    # -1,00€ max
@@ -94,7 +93,7 @@ def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple
 
 # ───────── Actions réutilisables (centimes) ─────────
 def mendier_action(storage, user_id: int) -> dict:
-    """Gain faible, boostable par l’inventaire."""
+    """Gain faible, boostable par l’inventaire. Incrémente le compteur d’usage."""
     p = storage.get_player(user_id)
 
     # Tirage de base en centimes
@@ -109,10 +108,15 @@ def mendier_action(storage, user_id: int) -> dict:
 
     amount = max(1, int(round((base + flat) * mult)))
 
+    # Argent
     if hasattr(storage, "add_money"):
         pp = storage.add_money(user_id, amount)
     else:
         pp = storage.update_player(user_id, money=p["money"] + amount)
+
+    # Stat d’usage (pour déblocages par paliers)
+    if hasattr(storage, "increment_stat"):
+        storage.increment_stat(user_id, "mendier_count", 1)
 
     return {
         "money": pp["money"],
@@ -121,7 +125,7 @@ def mendier_action(storage, user_id: int) -> dict:
     }
 
 def fouiller_action(storage, user_id: int) -> dict:
-    """Issue “bon / rien / perte”, légèrement boostée par inventaire."""
+    """Issue “bon / rien / perte”, légèrement boostée par inventaire. Incrémente le compteur d’usage."""
     p = storage.get_player(user_id)
 
     power = compute_power(storage, user_id)
@@ -134,13 +138,23 @@ def fouiller_action(storage, user_id: int) -> dict:
             pp = storage.add_money(user_id, gain)
         else:
             pp = storage.update_player(user_id, money=p["money"] + gain)
-        return {"money": pp["money"], "delta": gain, "msg": f"Tu revends des trucs: +{fmt_eur(gain)} • Total {fmt_eur(pp['money'])}"}
+
+        msg = {"money": pp["money"], "delta": gain, "msg": f"Tu revends des trucs: +{fmt_eur(gain)} • Total {fmt_eur(pp['money'])}"}
+
     elif r < 0.9:
-        return {"money": p["money"], "delta": 0, "msg": "Rien d’intéressant."}
+        # Rien trouvé (mais l’action compte tout de même pour l’XP/déblocage)
+        msg = {"money": p["money"], "delta": 0, "msg": "Rien d’intéressant."}
+
     else:
         perte = min(FOUILLER_BAD_LOSS, p["money"])
         pp = storage.update_player(user_id, money=max(0, p["money"] - perte))
-        return {"money": pp["money"], "delta": -perte, "msg": f"Tu te fais gratter. -{fmt_eur(perte)} • Total {fmt_eur(pp['money'])}"}
+        msg = {"money": pp["money"], "delta": -perte, "msg": f"Tu te fais gratter. -{fmt_eur(perte)} • Total {fmt_eur(pp['money'])}"}
+
+    # Stat d’usage (on compte chaque fouille autorisée)
+    if hasattr(storage, "increment_stat"):
+        storage.increment_stat(user_id, "fouiller_count", 1)
+
+    return msg
 
 def stats_action(storage, user_id: int) -> str:
     p = storage.get_player(user_id)
