@@ -45,6 +45,23 @@ def stats_action(storage, user_id: int) -> str:
 
 
 # ─────────────────────────────
+# Helpers présentation
+# ─────────────────────────────
+
+def _medal(rank: int) -> str:
+    return "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "🏅"
+
+def _format_leaderboard(rows: list[tuple[str | int, int]]) -> str:
+    """rows: [(user_id, money), ...]"""
+    lines: list[str] = []
+    for i, (uid, money) in enumerate(rows, start=1):
+        # mention cliquable sans ping (dans un embed, pas de notification)
+        mention = f"<@{int(uid)}>"
+        lines.append(f"**{i:>2}.** {mention} — **{money}€** {_medal(i)}")
+    return "\n".join(lines)
+
+
+# ─────────────────────────────
 # Enregistrement des commandes
 # ─────────────────────────────
 
@@ -56,7 +73,8 @@ def _build_group() -> app_commands.Group:
 
 def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, client: discord.Client | None = None):
     """
-    Enregistre les commandes slash /hess mendier, /hess fouiller et /stats.
+    Enregistre les commandes slash :
+      /hess mendier  •  /hess fouiller  •  /hess classement  •  /stats
     """
     hess = _build_group()
 
@@ -65,7 +83,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
-            await inter.response.send_message("Utilise /start avant.")
+            await inter.response.send_message("Utilise /start avant.", ephemeral=True)
             return
         res = mendier_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
@@ -75,19 +93,43 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
-            await inter.response.send_message("Utilise /start avant.")
+            await inter.response.send_message("Utilise /start avant.", ephemeral=True)
             return
         res = fouiller_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
 
-    # Ancien /stats déplacé ici
+    @hess.command(name="classement", description="Top 10 des joueurs les plus chargés")
+    async def classement(inter: Interaction):
+        storage = inter.client.storage
+        try:
+            rows = storage.top_richest(limit=10)  # [(user_id, money)]
+        except Exception:
+            rows = []
+
+        if not rows:
+            await inter.response.send_message(
+                "Aucun joueur classé pour l’instant. Lance **/start** puis **/hess mendier** / **/hess fouiller**.",
+                ephemeral=True
+            )
+            return
+
+        desc = _format_leaderboard(rows)
+        embed = discord.Embed(
+            title="🏆 Classement LaRue.exe",
+            description=desc,
+            color=discord.Color.dark_gold()
+        )
+        embed.set_footer(text="Top 10 — riche aujourd’hui, pauvre demain…")
+        await inter.response.send_message(embed=embed, ephemeral=False)
+
+    # /stats (global ou guild-scoped selon settings)
     @tree.command(name="stats", description="Tes stats")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def stats(inter: Interaction):
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         msg = stats_action(storage, inter.user.id)
-        # si pas commencé, rends-le éphémère :
+        # si pas commencé, rends-le éphémère
         ephemeral = not (p and p.get("has_started"))
         await inter.response.send_message(msg, ephemeral=ephemeral)
 
