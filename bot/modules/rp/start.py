@@ -37,6 +37,12 @@ class StartView(discord.ui.View):
         self.owner_id = owner_id
         self.message: discord.Message | None = None  # rempli après envoi
 
+    # Fallback pour versions sans View.disable_all_items()
+    def _disable_all_items(self) -> None:
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = True
+
     async def _guard(self, inter: Interaction) -> bool:
         if inter.user.id != self.owner_id:
             await inter.response.send_message(
@@ -51,17 +57,15 @@ class StartView(discord.ui.View):
         if not self.message:
             return
         try:
-            # clone l'embed existant
             old = self.message.embeds[0] if self.message.embeds else None
             if old:
                 new_embed = discord.Embed.from_dict(old.to_dict())
                 new_embed.color = discord.Color.dark_grey()
                 new_embed.set_footer(text="⏳ Ce menu est expiré, il fallait se bouger mon reuf.")
-                # désactive tous les boutons
-                self.disable_all_items()
+                self._disable_all_items()
                 await self.message.edit(embed=new_embed, view=self)
             else:
-                self.disable_all_items()
+                self._disable_all_items()
                 await self.message.edit(view=self)
         except discord.NotFound:
             pass  # déjà supprimé ailleurs
@@ -121,23 +125,10 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         color = PALETTE[inter.user.id % len(PALETTE)]
 
         embed = Embed(title=WELCOME_TITLE, color=color)
-
         # Une seule colonne claire + espace entre sections
-        embed.add_field(
-            name="Introduction",
-            value=WELCOME_INTRO + "\n\u200b",
-            inline=False
-        )
-        embed.add_field(
-            name="Code de LaRue.exe",
-            value=WELCOME_RULES + "\n\u200b",
-            inline=False
-        )
-        embed.add_field(
-            name="Tips",
-            value=WELCOME_HINTS,
-            inline=False
-        )
+        embed.add_field(name="Introduction", value=WELCOME_INTRO + "\n\u200b", inline=False)
+        embed.add_field(name="Code de LaRue.exe", value=WELCOME_RULES + "\n\u200b", inline=False)
+        embed.add_field(name="Tips", value=WELCOME_HINTS, inline=False)
         embed.set_footer(text="Choisis une action pour commencer • LaRue.exe")
 
         # Envoi + enregistrement du message pour le timeout
