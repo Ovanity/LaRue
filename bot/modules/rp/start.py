@@ -6,17 +6,22 @@ from discord import app_commands, Interaction, Embed
 from bot.modules.rp.economy import mendier_action, fouiller_action, stats_action
 
 WELCOME_MESSAGE = """
-🖥️ **Bienvenue dans LaRue.exe**
+╔══════════════════════╗
+   🖥️ **Mode Survie Activé**
+╚══════════════════════╝
 
-Wesh mon reuf, t’es arrivé ici sans thunes, sans matos, et avec un vieux carton.  
-Pas de tuto, pas de cinématique — c’est direct dans le dur.
+👋 **Wesh mon reuf**
+T’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton.
+Pas de tuto, pas de cinématique — c’est **direct dans le dur**.
 
-**Règles:**
-- Tu veux graille ? Tu mendies
-- Tu veux du matos ? Tu fouilles
-- Tu veux survivre ? Tu bouges vite
+📜 **Règles du terrain**
+┏━━━━━━━━━━━━━━━┓
+💰 Tu veux graille ? → *Tu mendies*
+🗑️ Tu veux du matos ? → *Tu fouilles*
+🏃 Tu veux survivre ? → *Tu bouges vite*
+┗━━━━━━━━━━━━━━━┛
 
-Bonne chance.
+🔥 Bonne chance, soldat de LaRue.
 """
 
 class StartView(discord.ui.View):
@@ -76,9 +81,9 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         storage.update_player(inter.user.id, has_started=True, money=0)
 
         embed = Embed(
-            title="Bienvenue dans LaRue.exe",
+            title="🌆 **Bienvenue dans LaRue.exe**",
             description=WELCOME_MESSAGE,
-            color=discord.Color.dark_gray()
+            color=discord.Color.blurple()
         )
         embed.set_footer(text="Choisis une action pour commencer")
         await inter.response.send_message(embed=embed, view=StartView(inter.user.id), ephemeral=False)
