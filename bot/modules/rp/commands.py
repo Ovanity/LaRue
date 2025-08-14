@@ -15,25 +15,25 @@ def setup_rp(tree: app_commands.CommandTree, storage, guild_id: int):
         storage.update_player(inter.user.id, has_started=True, money=0)
         e = Embed(title="Bienvenue dans LaRue",
                   description="Tu as 0€ et un vieux carton. Choisis 1 à 2 actions par jour.")
-        await inter.response.send_message(embed=e, ephemeral=True)
+        await inter.response.send_message(embed=e, ephemeral=False)
 
     @tree.command(name="mendier", description="Petit revenu")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def mendier(inter: Interaction):
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
-            await inter.response.send_message("Utilise /start avant.", ephemeral=True)
+            await inter.response.send_message("Utilise /start avant.", ephemeral=False)
             return
         gain = random.randint(1, 8)
         pp = storage.add_money(inter.user.id, gain)
-        await inter.response.send_message(f"On te file {gain}€. Total {pp['money']}€", ephemeral=True)
+        await inter.response.send_message(f"On te file {gain}€. Total {pp['money']}€", ephemeral=False)
 
     @tree.command(name="fouiller", description="Fouiller une poubelle")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def fouiller(inter: Interaction):
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
-            await inter.response.send_message("Utilise /start avant.", ephemeral=True)
+            await inter.response.send_message("Utilise /start avant.", ephemeral=False)
             return
         r = random.random()
         if r < 0.6:
@@ -46,4 +46,4 @@ def setup_rp(tree: app_commands.CommandTree, storage, guild_id: int):
             perte = min(5, p["money"])
             pp = storage.update_player(inter.user.id, money=p["money"] - perte)
             msg = f"Tu glisses dans un jus louche. -{perte}€. Total {pp['money']}€"
-        await inter.response.send_message(msg, ephemeral=True)
+        await inter.response.send_message(msg, ephemeral=False)
