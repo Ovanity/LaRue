@@ -122,7 +122,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         color = PALETTE[inter.user.id % len(PALETTE)]
 
         embed = Embed(
-            title=f"🌆 **Bienvenue dans LaRue.exe, {inter.user.display_name}**",
+            title=f"🌆 Bienvenue dans LaRue.exe <@{inter.user.id}>",
             color=color
         )
         # Une seule colonne claire + espace entre sections
