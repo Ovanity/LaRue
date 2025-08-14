@@ -115,7 +115,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
 
         desc = _format_leaderboard(rows)
         embed = discord.Embed(
-            title="🏆 Classement LaRue.exe",
+            title="🏆 LaRue.exe",
             description=desc,
             color=discord.Color.dark_gold()
         )
