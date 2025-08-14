@@ -3,7 +3,9 @@ import logging, discord
 from discord import app_commands
 from discord.ext import tasks
 from .config import settings
-from .storage import JSONStorage
+from .storage import SQLiteStorage
+
+storage = SQLiteStorage(settings.data_dir)
 
 log = logging.getLogger("larue")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -12,7 +14,6 @@ intents = discord.Intents.default()  # aucun privileged intent requis pour la V1
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-storage = JSONStorage(settings.data_dir)
 
 @client.event
 async def on_ready():

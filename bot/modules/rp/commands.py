@@ -32,7 +32,7 @@ def setup_rp(tree: app_commands.CommandTree, storage, guild_id: int):
             return
 
         gain = random.randint(1, 8)
-        pp = storage.update_player(inter.user.id, money=p["money"] + gain)
+        pp = storage.add_money(inter.user.id, gain)
         await inter.response.send_message(
             f"On te file {gain}€. Total {pp['money']}€",
             ephemeral=True
