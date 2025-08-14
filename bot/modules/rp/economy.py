@@ -4,9 +4,57 @@ import discord
 from discord import app_commands, Interaction
 
 # ─────────────────────────────
+# Paramètres gameplay (ajuste librement)
+# ─────────────────────────────
+MENDIER_COOLDOWN_S = 60        # 1 min
+MENDIER_DAILY_CAP  = 40        # 40 fois / jour
+
+FOUILLER_COOLDOWN_S = 300      # 5 min
+FOUILLER_DAILY_CAP  = 20       # 20 fois / jour
+
+
+# ─────────────────────────────
+# Utils
+# ─────────────────────────────
+def _medal(rank: int) -> str:
+    return "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "🏅"
+
+def _format_leaderboard(rows: list[tuple[str | int, int]]) -> str:
+    """rows: [(user_id, money), ...]"""
+    lines: list[str] = []
+    for i, (uid, money) in enumerate(rows, start=1):
+        mention = f"<@{int(uid)}>"  # mention cliquable (pas de ping dans un embed)
+        lines.append(f"**{i:>2}.** {mention} — **{money}€** {_medal(i)}")
+    return "\n".join(lines)
+
+def _fmt_wait(secs: int) -> str:
+    s = int(max(0, secs))
+    h, r = divmod(s, 3600)
+    m, s = divmod(r, 60)
+    if h: return f"{h}h{m:02d}m{s:02d}s"
+    if m: return f"{m}m{s:02d}s"
+    return f"{s}s"
+
+def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:
+    """
+    Retourne (ok, message_si_refus). Si storage n'a pas la méthode -> toujours OK.
+    """
+    if not hasattr(storage, "check_and_touch_action"):
+        return True, None
+
+    ok, wait, remaining = storage.check_and_touch_action(user_id, action, cd, cap)
+    if ok:
+        return True, None
+    # refus
+    if remaining == 0:
+        return False, "⛔ T’as tout claqué aujourd’hui. Reviens demain."
+    # cooldown restant
+    return False, f"⏳ Calme-toi, reviens dans **{_fmt_wait(wait)}** (reste **{remaining}** fois aujourd’hui)."
+
+
+# ─────────────────────────────
 # Actions réutilisables (pour start.py et slash)
 # ─────────────────────────────
-
 def mendier_action(storage, user_id: int) -> dict:
     p = storage.get_player(user_id)
     gain = random.randint(1, 8)
@@ -45,26 +93,8 @@ def stats_action(storage, user_id: int) -> str:
 
 
 # ─────────────────────────────
-# Helpers présentation
-# ─────────────────────────────
-
-def _medal(rank: int) -> str:
-    return "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "🏅"
-
-def _format_leaderboard(rows: list[tuple[str | int, int]]) -> str:
-    """rows: [(user_id, money), ...]"""
-    lines: list[str] = []
-    for i, (uid, money) in enumerate(rows, start=1):
-        # mention cliquable sans ping (dans un embed, pas de notification)
-        mention = f"<@{int(uid)}>"
-        lines.append(f"**{i:>2}.** {mention} — **{money}€** {_medal(i)}")
-    return "\n".join(lines)
-
-
-# ─────────────────────────────
 # Enregistrement des commandes
 # ─────────────────────────────
-
 def _build_group() -> app_commands.Group:
     return app_commands.Group(
         name="hess",
@@ -85,6 +115,12 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         if not p.get("has_started"):
             await inter.response.send_message("Utilise /start avant.", ephemeral=True)
             return
+
+        ok, msg = _check_limit(storage, inter.user.id, "mendier", MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP)
+        if not ok:
+            await inter.response.send_message(msg, ephemeral=True)
+            return
+
         res = mendier_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
 
@@ -95,6 +131,12 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         if not p.get("has_started"):
             await inter.response.send_message("Utilise /start avant.", ephemeral=True)
             return
+
+        ok, msg = _check_limit(storage, inter.user.id, "fouiller", FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP)
+        if not ok:
+            await inter.response.send_message(msg, ephemeral=True)
+            return
+
         res = fouiller_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
 

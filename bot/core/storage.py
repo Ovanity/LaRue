@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import TypedDict
 import sqlite3
 from contextlib import contextmanager
+import time
+import datetime as _dt
 
 # ───────── Types de données
 class Player(TypedDict, total=False):
@@ -48,8 +50,20 @@ class SQLiteStorage(Storage):
                     money       INTEGER NOT NULL DEFAULT 0
                 );
             """)
-            # Utile pour le classement
             con.execute("CREATE INDEX IF NOT EXISTS idx_players_money ON players(money DESC);")
+
+            # ── NEW: table pour cooldowns / quotas journaliers
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS actions (
+                    user_id  TEXT NOT NULL,
+                    action   TEXT NOT NULL,
+                    last_ts  INTEGER NOT NULL DEFAULT 0,
+                    day      TEXT NOT NULL DEFAULT '',
+                    count    INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, action)
+                );
+            """)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_actions_day ON actions(day);")
 
     # ── API
     def get_player(self, user_id: int) -> Player:
@@ -128,3 +142,71 @@ class SQLiteStorage(Storage):
         with self._conn() as con:
             (n,) = con.execute("SELECT COUNT(*) FROM players").fetchone()
         return int(n)
+
+    def _today_str(self) -> str:
+        # reset quotidien à 00:00 UTC (simple et prédictible)
+        return _dt.datetime.utcnow().strftime("%Y-%m-%d")
+
+    def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[
+        bool, int, int]:
+        """
+        Vérifie cooldown + quota et consomme 1 utilisation si OK.
+        Retourne (ok, wait_seconds, remaining_today).
+          - ok=False & wait>0  -> cooldown restant
+          - ok=False & remaining_today=0 -> quota du jour atteint
+        """
+        uid = str(user_id)
+        now = int(time.time())
+        today = self._today_str()
+        with self._conn() as con:
+            row = con.execute(
+                "SELECT last_ts, day, count FROM actions WHERE user_id=? AND action=?",
+                (uid, action)
+            ).fetchone()
+
+            if row is None:
+                # première utilisation -> crée l’entrée et consomme 1
+                con.execute(
+                    "INSERT INTO actions(user_id, action, last_ts, day, count) VALUES(?,?,?,?,?)",
+                    (uid, action, now, today, 1)
+                )
+                return True, 0, max(0, daily_cap - 1)
+
+            last_ts, day, count = int(row[0]), str(row[1]), int(row[2])
+
+            # nouveau jour -> reset du compteur
+            if day != today:
+                day = today
+                count = 0
+
+            # quota ?
+            if count >= daily_cap:
+                return False, 0, 0
+
+            # cooldown ?
+            wait = (last_ts + cooldown_s) - now
+            if wait > 0:
+                return False, wait, max(0, daily_cap - count)
+
+            # OK -> consomme 1
+            count += 1
+            con.execute(
+                "UPDATE actions SET last_ts=?, day=?, count=? WHERE user_id=? AND action=?",
+                (now, day, count, uid, action)
+            )
+            return True, 0, max(0, daily_cap - count)
+
+    def get_action_state(self, user_id: int, action: str) -> dict:
+        """
+        Petit helper de debug/affichage.
+        Retourne: { 'day': str, 'count': int, 'last_ts': int } ou défauts.
+        """
+        uid = str(user_id)
+        with self._conn() as con:
+            row = con.execute(
+                "SELECT last_ts, day, count FROM actions WHERE user_id=? AND action=?",
+                (uid, action)
+            ).fetchone()
+        if row is None:
+            return {"day": self._today_str(), "count": 0, "last_ts": 0}
+        return {"last_ts": int(row[0]), "day": str(row[1]), "count": int(row[2])}
