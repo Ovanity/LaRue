@@ -2,12 +2,21 @@ from __future__ import annotations
 import discord
 from discord import app_commands, Interaction, Embed
 
-# On réutilise les actions ET les constantes (cooldowns/caps) depuis economy
+# ——— Actions & constantes depuis economy (on garde une seule source de vérité)
 from bot.modules.rp.economy import (
     mendier_action, fouiller_action, stats_action,
     MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP,
     FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP,
 )
+
+# Import robuste de la vérification des limites
+try:
+    # si tu as ajouté l'alias public dans economy.py
+    from bot.modules.rp.economy import check_limit
+except Exception:
+    # fallback si seule la version "privée" existe
+    from bot.modules.rp.economy import _check_limit as check_limit
+
 
 # Palette de couleurs (choisie selon l'utilisateur)
 PALETTE = [
@@ -33,28 +42,6 @@ WELCOME_HINTS = (
     "▶️ Utilise les **boutons** ci‑dessous pour agir tout de suite\n"
     "ou tape : `/hesshelp` • pour avoir plus d'informations.\n"
 )
-
-# ─────────────────────────────
-# Helpers cooldown/quotas
-# ─────────────────────────────
-def _fmt_wait(secs: int) -> str:
-    s = int(max(0, secs))
-    h, r = divmod(s, 3600)
-    m, s = divmod(r, 60)
-    if h: return f"{h}h{m:02d}m{s:02d}s"
-    if m: return f"{m}m{s:02d}s"
-    return f"{s}s"
-
-def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:
-    """Utilise storage.check_and_touch_action si dispo; sinon laisse passer."""
-    if not hasattr(storage, "check_and_touch_action"):
-        return True, None
-    ok, wait, remaining = storage.check_and_touch_action(user_id, action, cd, cap)
-    if ok:
-        return True, None
-    if remaining == 0:
-        return False, "⛔ T’as tout claqué aujourd’hui. Reviens demain."
-    return False, f"⏳ Reviens dans **{_fmt_wait(wait)}** (reste **{remaining}** fois aujourd’hui)."
 
 
 # ─────────────────────────────
@@ -91,41 +78,49 @@ class StartView(discord.ui.View):
 
     @discord.ui.button(label="🥖 Mendier", style=discord.ButtonStyle.primary, custom_id="start_mendier")
     async def btn_mendier(self, inter: Interaction, _: discord.ui.Button):
-        if not await self._guard(inter): return
+        if not await self._guard(inter):
+            return
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
-            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True); return
+            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
+            return
 
-        ok, msg = _check_limit(storage, inter.user.id, "mendier", MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP)
+        ok, msg = check_limit(storage, inter.user.id, "mendier", MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP)
         if not ok:
-            await inter.response.send_message(msg, ephemeral=True); return
+            await inter.response.send_message(msg, ephemeral=True)
+            return
 
         res = mendier_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
 
     @discord.ui.button(label="🗑️ Fouiller", style=discord.ButtonStyle.success, custom_id="start_fouiller")
     async def btn_fouiller(self, inter: Interaction, _: discord.ui.Button):
-        if not await self._guard(inter): return
+        if not await self._guard(inter):
+            return
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
-            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True); return
+            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
+            return
 
-        ok, msg = _check_limit(storage, inter.user.id, "fouiller", FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP)
+        ok, msg = check_limit(storage, inter.user.id, "fouiller", FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP)
         if not ok:
-            await inter.response.send_message(msg, ephemeral=True); return
+            await inter.response.send_message(msg, ephemeral=True)
+            return
 
         res = fouiller_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
 
     @discord.ui.button(label="📊 Stats", style=discord.ButtonStyle.secondary, custom_id="start_stats")
     async def btn_stats(self, inter: Interaction, _: discord.ui.Button):
-        if not await self._guard(inter): return
+        if not await self._guard(inter):
+            return
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         if not p or not p.get("has_started"):
-            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True); return
+            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
+            return
         await inter.response.send_message(stats_action(storage, inter.user.id))
 
 

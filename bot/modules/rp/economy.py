@@ -81,6 +81,7 @@ def _daily_cap_message(action: str) -> str:
     return base.format(reset_rel=f"<t:{reset_at}:R>", reset_time=f"<t:{reset_at}:T>")
 
 def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:
+
     """Retourne (ok, message_si_refus). Si storage n'a pas la méthode -> toujours OK."""
     if not hasattr(storage, "check_and_touch_action"):
         return True, None
@@ -90,6 +91,7 @@ def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple
     if remaining == 0:
         return False, _daily_cap_message(action)
     return False, _cooldown_message(storage, user_id, action, wait, remaining, cd)
+
 
 # ───────── Actions réutilisables (centimes) ─────────
 def mendier_action(storage, user_id: int) -> dict:
@@ -239,3 +241,5 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
 # Compat setup
 def setup_economy(tree: app_commands.CommandTree, guild_obj: discord.Object | None):
     register(tree, guild_obj, None)
+
+check_limit = _check_limit
