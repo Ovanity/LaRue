@@ -43,7 +43,7 @@ def _cooldown_message(storage, user_id:int, action:str, wait:int, remaining:int,
         prog = "`──────────` 0%"
     rel = f"<t:{available_at}:R>"; abs_t = f"<t:{available_at}:T>"
     suffix = f"(reste **{remaining}** fois aujourd’hui)" if remaining>0 else ""
-    return f"⏳ Trop pressé. Prochaine tentative {rel} • {abs_t} {suffix}\n{prog}"
+    return f"⏳ Calme toi. Prochaine tentative {rel} • {abs_t} {suffix}\n{prog}"
 
 def _daily_cap_message(action: str) -> str:
     reset_at = _next_reset_epoch("Europe/Paris", 8)
