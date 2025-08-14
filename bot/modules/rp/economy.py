@@ -6,15 +6,19 @@ import discord
 from discord import app_commands, Interaction
 from zoneinfo import ZoneInfo
 
-
 # ───────── Paramètres d'équilibrage LaRue.exe ─────────
 # Cooldowns (en secondes)
-MENDIER_COOLDOWN_S  = 60 * 60        # 1h
-FOUILLER_COOLDOWN_S = 60 * 60 * 24    # 6h
+MENDIER_COOLDOWN_S  = 60 * 60         # 1h
+FOUILLER_COOLDOWN_S = 60 * 60 * 24    # 24h
 # Limites quotidiennes
-MENDIER_DAILY_CAP   = 12             # 12/jour
-FOUILLER_DAILY_CAP  = 1              # 2/jour
+MENDIER_DAILY_CAP   = 10              # 10/jour
+FOUILLER_DAILY_CAP  = 1               # 1/jour
 
+# Messages spécifiques quand la LIMITE QUOTIDIENNE est atteinte
+DAILY_LIMIT_MSGS: dict[str, str] = {
+    "mendier":  "⛔ Plus une pièce à gratter aujourd’hui. Reset {reset_rel} • {reset_time}",
+    "fouiller": "⛔ Plus un coin de poubelle à fouiller aujourd’hui. Reset {reset_rel} • {reset_time}",
+}
 
 # ─────────────────────────────
 # Utils (classement + cooldown UX)
@@ -23,7 +27,6 @@ def _medal(rank: int) -> str:
     return "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "🏅"
 
 def _format_leaderboard(rows: list[tuple[str | int, int]]) -> str:
-    """rows: [(user_id, money), ...]"""
     lines: list[str] = []
     for i, (uid, money) in enumerate(rows, start=1):
         mention = f"<@{int(uid)}>"  # mention cliquable (pas de ping dans un embed)
@@ -47,7 +50,6 @@ def _next_reset_epoch(tz_name: str = "Europe/Paris", hour: int = 8) -> int:
         target += timedelta(days=1)
     return int(target.astimezone(UTC).timestamp())
 
-
 def _cooldown_message(storage, user_id: int, action: str, wait: int, remaining: int, total_cd: int) -> str:
     """Message plus parlant pour un cooldown en cours (timestamps + barre de progression)."""
     now = int(time.time())
@@ -68,15 +70,18 @@ def _cooldown_message(storage, user_id: int, action: str, wait: int, remaining: 
         prog = "`──────────` 0%"
 
     # Timestamps Discord
-    rel = f"<t:{available_at}:R>"   # ex: "dans 5 heures"
-    abs_t = f"<t:{available_at}:T>" # ex: "14:37"
+    rel = f"<t:{available_at}:R>"    # ex: "dans 5 heures"
+    abs_t = f"<t:{available_at}:T>"  # ex: "14:37"
 
     suffix = f"(reste **{remaining}** fois aujourd’hui)" if remaining > 0 else ""
-    return f"⏳ Trop pressé. Prochaine tentative {rel} • {abs_t} {suffix}\n{prog}"
+    return f"⏳ Calme toi. Prochaine tentative {rel} • {abs_t} {suffix}\n{prog}"
 
-def _daily_cap_message() -> str:
+def _daily_cap_message(action: str) -> str:
     reset_at = _next_reset_epoch("Europe/Paris", 8)
-    return f"⛔ T’as tout claqué aujourd’hui. Reset {f'<t:{reset_at}:R>'} • {f'<t:{reset_at}:T>'}"
+    reset_rel  = f"<t:{reset_at}:R>"
+    reset_time = f"<t:{reset_at}:T>"
+    base = DAILY_LIMIT_MSGS.get(action, "⛔ Tu as atteint ta limite quotidienne.")
+    return base.format(reset_rel=reset_rel, reset_time=reset_time)
 
 def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:
     """
@@ -90,10 +95,9 @@ def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple
         return True, None
     # Quota du jour atteint
     if remaining == 0:
-        return False, _daily_cap_message()
+        return False, _daily_cap_message(action)
     # Cooldown restant
     return False, _cooldown_message(storage, user_id, action, wait, remaining, cd)
-
 
 # ─────────────────────────────
 # Actions réutilisables (pour start.py et slash)
@@ -105,11 +109,7 @@ def mendier_action(storage, user_id: int) -> dict:
         pp = storage.add_money(user_id, gain)
     else:
         pp = storage.update_player(user_id, money=p["money"] + gain)
-    return {
-        "money": pp["money"],
-        "delta": gain,
-        "msg": f"Tu tends la main… +{gain}€ • Total {pp['money']}€",
-    }
+    return {"money": pp["money"], "delta": gain, "msg": f"Tu tends la main… +{gain}€ • Total {pp['money']}€"}
 
 def fouiller_action(storage, user_id: int) -> dict:
     p = storage.get_player(user_id)
@@ -133,7 +133,6 @@ def stats_action(storage, user_id: int) -> str:
     if not p or not p.get("has_started"):
         return "🚀 Tu n'as pas encore commencé ton aventure. Utilise **/start** pour débuter !"
     return f"💼 Argent: {p['money']}€"
-
 
 # ─────────────────────────────
 # Enregistrement des commandes
@@ -187,7 +186,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
     async def classement(inter: Interaction):
         storage = inter.client.storage
         try:
-            rows = storage.top_richest(limit=10)  # [(user_id, money)]
+            rows = storage.top_richest(limit=10)
         except Exception:
             rows = []
 
@@ -207,23 +206,19 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         embed.set_footer(text="Top 10 — riche aujourd’hui, pauvre demain…")
         await inter.response.send_message(embed=embed, ephemeral=False)
 
-    # /stats (global ou guild-scoped selon settings)
     @tree.command(name="stats", description="Tes stats")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def stats(inter: Interaction):
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         msg = stats_action(storage, inter.user.id)
-        # si pas commencé, rends-le éphémère
         ephemeral = not (p and p.get("has_started"))
         await inter.response.send_message(msg, ephemeral=ephemeral)
 
-    # Attache le groupe au tree
     if guild_obj:
         tree.add_command(hess, guild=guild_obj)
     else:
         tree.add_command(hess)
 
-# Compat setup
 def setup_economy(tree: app_commands.CommandTree, guild_obj: discord.Object | None):
     register(tree, guild_obj, None)
