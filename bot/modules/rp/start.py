@@ -23,9 +23,9 @@ WELCOME_INTRO = (
 
 WELCOME_RULES = (
     "📜 **Règles du terrain**\n"
-    "• 💰 Tu veux graille ? → *Tu mendies*\n"
-    "• 🗑️ Tu veux du matos ? → *Tu fouilles*\n"
-    "• 🏃 Tu veux survivre ? → *Tu bouges vite*"
+    "💰 Tu veux graille ? → *Tu mendies*\n"
+    "🗑️ Tu veux du matos ? → *Tu fouilles*\n"
+    "🏃 Tu veux survivre ? → *Tu bouges vite*"
 )
 
 WELCOME_HINTS = (
@@ -94,9 +94,21 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
 
 
         # Une seule colonne claire
-        embed.add_field(name="Introduction", value=WELCOME_INTRO, inline=False)
-        embed.add_field(name="Code de LaRue.exe", value=WELCOME_RULES, inline=False)
-        embed.add_field(name="Tips", value=WELCOME_HINTS, inline=False)
+        embed.add_field(
+            name="Introduction",
+            value=WELCOME_INTRO + "\n\u200b",  # Espace visuel
+            inline=False
+        )
+        embed.add_field(
+            name="Code de LaRue.exe",
+            value=WELCOME_RULES + "\n\u200b",  # Espace visuel
+            inline=False
+        )
+        embed.add_field(
+            name="Tips",
+            value=WELCOME_HINTS,
+            inline=False
+        )
         embed.set_footer(text="Choisis une action pour commencer • LaRue.exe")
 
         await inter.response.send_message(embed=embed, view=StartView(inter.user.id), ephemeral=False)
