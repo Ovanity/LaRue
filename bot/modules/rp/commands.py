@@ -3,11 +3,10 @@ import random, discord
 from discord import app_commands, Interaction, Embed
 
 def setup_rp(tree: app_commands.CommandTree, storage, guild_id: int):
-    def scope(func):
-        return app_commands.guilds(discord.Object(id=guild_id))(func) if guild_id else func
+    guild_obj = discord.Object(id=guild_id) if guild_id else None
 
-    @scope
     @tree.command(name="start", description="Entrer dans LaRue")
+    @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def start(inter: Interaction):
         p = storage.get_player(inter.user.id)
         if p.get("has_started"):
@@ -18,19 +17,19 @@ def setup_rp(tree: app_commands.CommandTree, storage, guild_id: int):
                   description="Tu as 0€ et un vieux carton. Choisis 1 à 2 actions par jour.")
         await inter.response.send_message(embed=e, ephemeral=True)
 
-    @scope
     @tree.command(name="mendier", description="Petit revenu")
+    @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def mendier(inter: Interaction):
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):
             await inter.response.send_message("Utilise /start avant.", ephemeral=True)
             return
         gain = random.randint(1, 8)
-        pp = storage.add_money(inter.user.id, gain)  # si tu as add_money, sinon update_player(...)
+        pp = storage.add_money(inter.user.id, gain)
         await inter.response.send_message(f"On te file {gain}€. Total {pp['money']}€", ephemeral=True)
 
-    @scope
     @tree.command(name="fouiller", description="Fouiller une poubelle")
+    @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def fouiller(inter: Interaction):
         p = storage.get_player(inter.user.id)
         if not p.get("has_started"):

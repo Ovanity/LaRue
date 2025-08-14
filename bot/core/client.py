@@ -17,10 +17,22 @@ tree = app_commands.CommandTree(client)
 
 @client.event
 async def on_ready():
-    if settings.guild_id:
-        await tree.sync(guild=discord.Object(id=settings.guild_id))
-    else:
-        await tree.sync()
+    try:
+        if settings.guild_id:
+            guild_obj = discord.Object(id=settings.guild_id)
+            synced = await tree.sync(guild=guild_obj)
+            log.info("Synced %d commands on guild %s: %s",
+                     len(synced), settings.guild_id, [c.name for c in synced])
+            # Double-check: quelles commandes le serveur voit ?
+            seen = await tree.fetch_commands(guild=guild_obj)
+            log.info("Guild fetch shows %d commands: %s",
+                     len(seen), [c.name for c in seen])
+        else:
+            synced = await tree.sync()
+            log.info("Synced %d GLOBAL commands: %s", len(synced), [c.name for c in synced])
+    except Exception as e:
+        log.exception("Sync error: %s", e)
+
     if not daily_tick.is_running():
         daily_tick.start()
     log.info("LaRue connecté en %s", client.user)
