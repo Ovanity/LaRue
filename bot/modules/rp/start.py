@@ -91,10 +91,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
 
         embed = Embed(title=WELCOME_TITLE, color=color)
         # Avatar (propre, sans surcharger)
-        try:
-            embed.set_thumbnail(url=inter.user.display_avatar.url)
-        except Exception:
-            pass
+
 
         # Une seule colonne claire
         embed.add_field(name="Introduction", value=WELCOME_INTRO, inline=False)
