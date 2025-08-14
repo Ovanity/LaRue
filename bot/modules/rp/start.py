@@ -121,29 +121,25 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         # Couleur choisie selon l'utilisateur (stable mais variée)
         color = PALETTE[inter.user.id % len(PALETTE)]
 
-        embed = Embed(
-            title="🌆 LaRue.exe",
-            color=color
-        )
+        SP = "\u2800"  # espace invisible qui "prend" la ligne
+
+        embed = Embed(title="🌆 LaRue.exe", color=color)
 
         embed.add_field(
             name="Introduction",
-            value="\n" + WELCOME_INTRO.format(mention=inter.user.mention) + "\n\u200b",
+            value=f"{SP}\n" + WELCOME_INTRO.format(mention=inter.user.mention) + "\n\u200b",
             inline=False
         )
-
         embed.add_field(
             name="Code de LaRue.exe",
-            value="\n" + WELCOME_RULES + "\n\u200b",
+            value=f"{SP}\n" + WELCOME_RULES + "\n\u200b",
             inline=False
         )
-
         embed.add_field(
             name="Tips",
-            value="\n" + WELCOME_HINTS,
+            value=f"{SP}\n" + WELCOME_HINTS,
             inline=False
         )
-
         embed.set_footer(text="Choisis une action pour commencer • LaRue.exe")
 
         # Envoi + enregistrement du message pour le timeout
