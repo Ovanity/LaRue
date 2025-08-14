@@ -4,6 +4,8 @@ import time
 from datetime import datetime, UTC, timedelta
 import discord
 from discord import app_commands, Interaction
+from zoneinfo import ZoneInfo
+
 
 # ───────── Paramètres d'équilibrage LaRue.exe ─────────
 # Cooldowns (en secondes)
@@ -37,10 +39,14 @@ def _progress_bar(elapsed: int, total: int, width: int = 10) -> tuple[str, int]:
     bar = "█" * filled + "─" * (width - filled)
     return bar, int(pct * 100)
 
-def _next_utc_midnight_epoch() -> int:
-    now = datetime.now(UTC)
-    nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    return int(nxt.timestamp())
+def _next_reset_epoch(tz_name: str = "Europe/Paris", hour: int = 8) -> int:
+    """Prochaine coupure journalière à hour:00 dans tz_name, renvoyée en epoch UTC."""
+    now_local = datetime.now(ZoneInfo(tz_name))
+    target = now_local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if now_local >= target:
+        target += timedelta(days=1)
+    return int(target.astimezone(UTC).timestamp())
+
 
 def _cooldown_message(storage, user_id: int, action: str, wait: int, remaining: int, total_cd: int) -> str:
     """Message plus parlant pour un cooldown en cours (timestamps + barre de progression)."""
@@ -69,7 +75,7 @@ def _cooldown_message(storage, user_id: int, action: str, wait: int, remaining: 
     return f"⏳ Trop pressé. Prochaine tentative {rel} • {abs_t} {suffix}\n{prog}"
 
 def _daily_cap_message() -> str:
-    reset_at = _next_utc_midnight_epoch()
+    reset_at = _next_reset_epoch("Europe/Paris", 8)
     return f"⛔ T’as tout claqué aujourd’hui. Reset {f'<t:{reset_at}:R>'} • {f'<t:{reset_at}:T>'}"
 
 def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:

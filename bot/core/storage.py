@@ -4,7 +4,8 @@ from typing import TypedDict
 import sqlite3
 from contextlib import contextmanager
 import time
-import datetime as _dt
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 # ───────── Types de données
 class Player(TypedDict, total=False):
@@ -144,8 +145,15 @@ class SQLiteStorage(Storage):
         return int(n)
 
     def _today_str(self) -> str:
-        # reset quotidien à 00:00 UTC (simple et prédictible)
-        return _dt.datetime.utcnow().strftime("%Y-%m-%d")
+        """
+        Jour de jeu basé sur Europe/Paris avec coupure à 08:00.
+        Avant 08:00, on considère que ça appartient encore à la veille.
+        """
+        tz = ZoneInfo("Europe/Paris")
+        now = datetime.now(tz)
+        reset_hour = 8
+        anchor = now if now.hour >= reset_hour else (now - timedelta(days=1))
+        return anchor.strftime("%Y-%m-%d")
 
     def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[
         bool, int, int]:
