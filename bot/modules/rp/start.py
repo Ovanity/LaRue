@@ -92,7 +92,6 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         embed = Embed(title=WELCOME_TITLE, color=color)
         # Avatar (propre, sans surcharger)
         try:
-            embed.set_author(name=inter.user.display_name, icon_url=inter.user.display_avatar.url)
             embed.set_thumbnail(url=inter.user.display_avatar.url)
         except Exception:
             pass
