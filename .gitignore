@@ -1,0 +1,20 @@
+# Environnements virtuels Python
+.venv/
+venv/
+
+# Caches Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Fichiers sensibles
+.env
+
+# Données locales
+data/
+
+# Config PyCharm
+.idea/
+
+# Config PyCharm
+*.iml
