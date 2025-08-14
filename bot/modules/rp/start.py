@@ -137,7 +137,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         )
         embed.add_field(
             name="Tips",
-            value=f"{SP}\n" + WELCOME_HINTS + "\n\u200b",
+            value=f"{SP}\n" + WELCOME_HINTS + "\n",
             inline=False
         )
 
