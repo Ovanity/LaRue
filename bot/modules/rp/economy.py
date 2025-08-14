@@ -1,5 +1,7 @@
 from __future__ import annotations
 import random
+import time
+import datetime as _dt
 import discord
 from discord import app_commands, Interaction
 
@@ -13,7 +15,7 @@ FOUILLER_DAILY_CAP  = 2              # 2/jour
 
 
 # ─────────────────────────────
-# Utils
+# Utils (classement + cooldown UX)
 # ─────────────────────────────
 def _medal(rank: int) -> str:
     return "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else "🏅"
@@ -26,13 +28,49 @@ def _format_leaderboard(rows: list[tuple[str | int, int]]) -> str:
         lines.append(f"**{i:>2}.** {mention} — **{money}€** {_medal(i)}")
     return "\n".join(lines)
 
-def _fmt_wait(secs: int) -> str:
-    s = int(max(0, secs))
-    h, r = divmod(s, 3600)
-    m, s = divmod(r, 60)
-    if h: return f"{h}h{m:02d}m{s:02d}s"
-    if m: return f"{m}m{s:02d}s"
-    return f"{s}s"
+# --- Barre de progression (10 cases)
+def _progress_bar(elapsed: int, total: int, width: int = 10) -> tuple[str, int]:
+    if total <= 0:
+        return "──────────", 100
+    pct = max(0.0, min(1.0, elapsed / total))
+    filled = int(round(pct * width))
+    bar = "█" * filled + "─" * (width - filled)
+    return bar, int(pct * 100)
+
+def _next_utc_midnight_epoch() -> int:
+    now = _dt.datetime.utcnow()
+    nxt = (now + _dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(nxt.timestamp())
+
+def _cooldown_message(storage, user_id: int, action: str, wait: int, remaining: int, total_cd: int) -> str:
+    """Message plus parlant pour un cooldown en cours (timestamps + barre de progression)."""
+    now = int(time.time())
+    available_at = now + int(wait)
+
+    # Essaie de récupérer last_ts pour la progression
+    last_ts = None
+    if hasattr(storage, "get_action_state"):
+        st = storage.get_action_state(user_id, action)
+        last_ts = int(st.get("last_ts", 0)) or None
+
+    # Barre de progression
+    if last_ts:
+        elapsed = max(0, now - last_ts)
+        bar, pct = _progress_bar(elapsed, max(total_cd, 1))
+        prog = f"`{bar}` {pct}%"
+    else:
+        prog = "`──────────` 0%"
+
+    # Timestamps Discord
+    rel = f"<t:{available_at}:R>"   # ex: "dans 5 heures"
+    abs_t = f"<t:{available_at}:T>" # ex: "14:37"
+
+    suffix = f"(reste **{remaining}** fois aujourd’hui)" if remaining > 0 else ""
+    return f"⏳ Trop pressé. Prochaine tentative {rel} • {abs_t} {suffix}\n{prog}"
+
+def _daily_cap_message() -> str:
+    reset_at = _next_utc_midnight_epoch()
+    return f"⛔ T’as tout claqué aujourd’hui. Reset {f'<t:{reset_at}:R>'} • {f'<t:{reset_at}:T>'}"
 
 def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:
     """
@@ -44,11 +82,11 @@ def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple
     ok, wait, remaining = storage.check_and_touch_action(user_id, action, cd, cap)
     if ok:
         return True, None
-    # refus
+    # Quota du jour atteint
     if remaining == 0:
-        return False, "⛔ T’as tout claqué aujourd’hui. Reviens demain."
-    # cooldown restant
-    return False, f"⏳ Calme-toi, reviens dans **{_fmt_wait(wait)}** (reste **{remaining}** fois aujourd’hui)."
+        return False, _daily_cap_message()
+    # Cooldown restant
+    return False, _cooldown_message(storage, user_id, action, wait, remaining, cd)
 
 
 # ─────────────────────────────
