@@ -53,20 +53,16 @@ class StartView(discord.ui.View):
         return True
 
     async def on_timeout(self) -> None:
-        """Désactive les boutons et marque l'embed comme expiré."""
+        """Remplace l'embed par un simple message d'expiration et désactive les boutons."""
         if not self.message:
             return
         try:
-            old = self.message.embeds[0] if self.message.embeds else None
-            if old:
-                new_embed = discord.Embed.from_dict(old.to_dict())
-                new_embed.color = discord.Color.dark_grey()
-                new_embed.set_footer(text="⏳ Ce menu est expiré, il fallait se bouger mon reuf.")
-                self._disable_all_items()
-                await self.message.edit(embed=new_embed, view=self)
-            else:
-                self._disable_all_items()
-                await self.message.edit(view=self)
+            expired_embed = discord.Embed(
+                description="⏳ Ce menu est expiré, il fallait se bouger mon reuf.",
+                color=discord.Color.dark_grey()
+            )
+            self._disable_all_items()
+            await self.message.edit(embed=expired_embed, view=self)
         except discord.NotFound:
             pass  # déjà supprimé ailleurs
 
