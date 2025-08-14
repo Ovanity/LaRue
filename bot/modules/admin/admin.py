@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 import sqlite3
 import discord
 from discord import app_commands, Interaction
@@ -9,11 +8,12 @@ ADMIN_ID = 298893605613862912
 
 admin = app_commands.Group(name="admin", description="Outils d'administration")
 
-# /admin reset scope:<players|cooldowns|all>
-@admin.command(name="reset", description="Réinitialise la base (joueurs, cooldowns ou tout).")
+# /admin reset scope:<players|cooldowns|inventory|all>
+@admin.command(name="reset", description="Réinitialise des tables (joueurs, cooldowns, inventaire ou tout).")
 @app_commands.choices(scope=[
     app_commands.Choice(name="players", value="players"),
     app_commands.Choice(name="cooldowns", value="cooldowns"),
+    app_commands.Choice(name="inventory", value="inventory"),
     app_commands.Choice(name="all", value="all"),
 ])
 async def admin_reset(inter: Interaction, scope: app_commands.Choice[str]):
@@ -48,22 +48,34 @@ async def admin_reset(inter: Interaction, scope: app_commands.Choice[str]):
                     con.execute("DELETE FROM players;")
                     msg_parts.append(f"players vidé ({n} ligne(s))")
                 if choice in ("cooldowns", "all"):
-                    # table des limites (cooldowns/quotas)
-                    # existe grâce à ton storage._init_db()
                     n = _count(con, "actions")
                     con.execute("DELETE FROM actions;")
                     msg_parts.append(f"actions (cooldowns) vidée ({n} ligne(s))")
+                if choice in ("inventory", "all"):
+                    # nouvelle purge d'inventaire
+                    # table créée dans ton storage._init_db() sous le nom 'inventory'
+                    n = _count(con, "inventory")
+                    con.execute("DELETE FROM inventory;")
+                    msg_parts.append(f"inventory vidée ({n} ligne(s))")
 
-            await _ok(f"{' & '.join(msg_parts)} dans {db_path}")
+            if not msg_parts:
+                await _warn("Rien à faire (choix invalide ?)")
+            else:
+                await _ok(f"{' • '.join(msg_parts)} dans {db_path}")
 
-        # Fallback JSON (si jamais tu repasses en JSONStorage)
+        # Fallback JSON (si un jour tu repasses à JSONStorage)
         elif hasattr(storage, "path"):
             if choice in ("players", "all"):
                 storage.path.write_text("{}")
-                remain = " (cooldowns non gérés en JSON)" if choice == "all" else ""
-                await _ok(f"players.json réinitialisé ({storage.path}){remain}")
-            elif choice == "cooldowns":
-                await _warn("Pas de table cooldowns avec le backend JSON.")
+                more = []
+                if choice in ("cooldowns", "all"):
+                    more.append("cooldowns non gérés en JSON")
+                if choice in ("inventory", "all"):
+                    more.append("inventory non géré en JSON")
+                suffix = f" ({', '.join(more)})" if more else ""
+                await _ok(f"players.json réinitialisé {suffix}")
+            else:
+                await _warn("Ce backend JSON ne gère ni cooldowns ni inventaire.")
         else:
             await _warn("Backend de données inconnu : aucune action.")
 
@@ -72,7 +84,6 @@ async def admin_reset(inter: Interaction, scope: app_commands.Choice[str]):
 
 
 def setup_admin(tree: app_commands.CommandTree, guild_obj: discord.Object | None):
-    # Attache le groupe /admin (scopé guild si fourni)
     if guild_obj:
         tree.add_command(admin, guild=guild_obj)
     else:
