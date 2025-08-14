@@ -127,7 +127,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         )
         # Une seule colonne claire + espace entre sections
         embed.add_field(
-            name="Introduction",
+            name="Introduction\n",
             value=WELCOME_INTRO.format(mention=inter.user.mention) + "\n\u200b",
             inline=False
         )
