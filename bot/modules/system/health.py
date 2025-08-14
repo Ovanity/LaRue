@@ -14,4 +14,4 @@ def setup_system(tree: app_commands.CommandTree, storage, guild_id: int):
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def stats(inter: Interaction):
         p = storage.get_player(inter.user.id)
-        await inter.response.send_message(f"💼 Argent: {p['money']}€", ephemeral=True)
+        await inter.response.send_message(f"💼 Argent: {p['money']}€", ephemeral=False)
