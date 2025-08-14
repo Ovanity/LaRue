@@ -15,11 +15,11 @@ T’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton.
 Pas de tuto, pas de cinématique — c’est **direct dans le dur**.
 
 📜 **Règles du terrain**
-┏━━━━━━━━━━━━━━━┓
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 💰 Tu veux graille ? → *Tu mendies*
 🗑️ Tu veux du matos ? → *Tu fouilles*
 🏃 Tu veux survivre ? → *Tu bouges vite*
-┗━━━━━━━━━━━━━━━┛
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 🔥 Bonne chance, soldat de LaRue.
 """
