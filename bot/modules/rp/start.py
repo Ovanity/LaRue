@@ -98,8 +98,8 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
             pass
 
         # Une seule colonne claire
-        embed.add_field(name="Intro", value=WELCOME_INTRO, inline=False)
-        embed.add_field(name="Règles", value=WELCOME_RULES, inline=False)
+        embed.add_field(name="Introduction", value=WELCOME_INTRO, inline=False)
+        embed.add_field(name="Code de LaRue.exe", value=WELCOME_RULES, inline=False)
         embed.add_field(name="Tips", value=WELCOME_HINTS, inline=False)
         embed.set_footer(text="Choisis une action pour commencer • LaRue.exe")
 
