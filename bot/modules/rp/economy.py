@@ -3,14 +3,13 @@ import random
 import discord
 from discord import app_commands, Interaction
 
-# ─────────────────────────────
-# Paramètres gameplay (ajuste librement)
-# ─────────────────────────────
-MENDIER_COOLDOWN_S = 60        # 1 min
-MENDIER_DAILY_CAP  = 40        # 40 fois / jour
-
-FOUILLER_COOLDOWN_S = 300      # 5 min
-FOUILLER_DAILY_CAP  = 20       # 20 fois / jour
+# ───────── Paramètres d'équilibrage LaRue.exe ─────────
+# Cooldowns (en secondes)
+MENDIER_COOLDOWN_S  = 60 * 60        # 1h
+FOUILLER_COOLDOWN_S = 60 * 60 * 6    # 6h
+# Limites quotidiennes
+MENDIER_DAILY_CAP   = 12             # 12/jour
+FOUILLER_DAILY_CAP  = 2              # 2/jour
 
 
 # ─────────────────────────────
