@@ -5,23 +5,19 @@ from discord import app_commands, Interaction, Embed
 # on réutilise les mêmes fonctions que les slash
 from bot.modules.rp.economy import mendier_action, fouiller_action, stats_action
 
-WELCOME_MESSAGE = """
-╔══════════════════════╗
-   🖥️ **Mode Survie Activé**
-╚══════════════════════╝
-
-👋 **Wesh mon reuf**
-T’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton.
-
-📜 **Règles du terrain**
-
-💰 Tu veux graille ? → *Tu mendies*
-🗑️ Tu veux du matos ? → *Tu fouilles*
-🏃 Tu veux survivre ? → *Tu bouges vite*
-
-
-🔥 Bonne chance, dans LaRue.exe.
-"""
+# Texte conservé (on le découpe en sections via fields)
+WELCOME_HEADER = "╔══════════════════════╗\n   🖥️ **Mode Survie Activé**\n╚══════════════════════╝"
+WELCOME_INTRO = (
+    "👋 **Wesh mon reuf**\n"
+    "T’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton."
+)
+WELCOME_RULES = (
+    "💰 Tu veux graille ? → *Tu mendies*\n"
+    "🗑️ Tu veux du matos ? → *Tu fouilles*\n"
+    "🏃 Tu veux survivre ? → *Tu bouges vite*"
+)
+WELCOME_FOOTER = "🔥 Bonne chance, dans LaRue.exe."
+ZWSP = "\u200b"  # zero-width space pour créer des espaces propres entre les sections
 
 class StartView(discord.ui.View):
     def __init__(self, owner_id: int):
@@ -79,10 +75,41 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
 
         storage.update_player(inter.user.id, has_started=True, money=0)
 
+        # — Embed “carte” avec layout en colonnes via fields
         embed = Embed(
             title="🌆 **Bienvenue dans LaRue.exe**",
-            description=WELCOME_MESSAGE,
+            description=WELCOME_HEADER,
             color=discord.Color.blurple()
         )
-        embed.set_footer(text="Choisis une action pour commencer")
+
+        # Avatar et auteur pour personnaliser
+        try:
+            embed.set_author(name=inter.user.display_name, icon_url=inter.user.display_avatar.url)
+            embed.set_thumbnail(url=inter.user.display_avatar.url)
+        except Exception:
+            pass  # au cas où pas d'avatar
+
+        # Colonne gauche : Intro + Règles
+        embed.add_field(name="Intro", value=WELCOME_INTRO, inline=True)
+        embed.add_field(name="Règles du terrain", value=WELCOME_RULES, inline=True)
+
+        # Ligne de séparation (prend toute la ligne)
+        embed.add_field(name=ZWSP, value="─" * 24, inline=False)
+
+        # “Raccourcis” lisibles (pointe vers tes actions)
+        shortcuts = (
+            "▶️ **Boutons ci-dessous** pour agir tout de suite\n"
+            "ou tape : `/hess mendier` • `/hess fouiller` • `/stats`"
+        )
+        tips = (
+            "⚠️ Les actions peuvent **réussir** ou **te plomber**.\n"
+            "🔒 Ce menu t’appartient : **toi seul** peux cliquer."
+        )
+        embed.add_field(name="Raccourcis", value=shortcuts, inline=True)
+        embed.add_field(name="Tips", value=tips, inline=True)
+
+        # Footer RP
+        embed.add_field(name=ZWSP, value=WELCOME_FOOTER, inline=False)
+        embed.set_footer(text="💡 Choisis une action pour commencer • LaRue.exe")
+
         await inter.response.send_message(embed=embed, view=StartView(inter.user.id), ephemeral=False)
