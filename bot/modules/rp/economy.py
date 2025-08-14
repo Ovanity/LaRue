@@ -8,10 +8,10 @@ from discord import app_commands, Interaction
 # ───────── Paramètres d'équilibrage LaRue.exe ─────────
 # Cooldowns (en secondes)
 MENDIER_COOLDOWN_S  = 60 * 60        # 1h
-FOUILLER_COOLDOWN_S = 60 * 60 * 6    # 6h
+FOUILLER_COOLDOWN_S = 60 * 60 * 24    # 6h
 # Limites quotidiennes
 MENDIER_DAILY_CAP   = 12             # 12/jour
-FOUILLER_DAILY_CAP  = 2              # 2/jour
+FOUILLER_DAILY_CAP  = 1              # 2/jour
 
 
 # ─────────────────────────────
