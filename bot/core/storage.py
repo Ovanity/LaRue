@@ -16,9 +16,19 @@ class Player(TypedDict, total=False):
 class Storage:
     def get_player(self, user_id: int) -> Player: ...
     def update_player(self, user_id: int, **fields) -> Player: ...
-    # (optionnel) helpers courants
     def add_money(self, user_id: int, amount: int) -> Player: ...
     def top_richest(self, limit: int = 10) -> list[tuple[str, int]]: ...
+    # --- nouveaux helpers (optionnels pour le reste du code)
+    def get_money(self, user_id: int) -> int: ...
+    def try_spend(self, user_id: int, amount: int) -> bool: ...
+    def get_inventory(self, user_id: int) -> dict[str, int]: ...
+    def add_item(self, user_id: int, item_id: str, qty: int = 1) -> None: ...
+    # cooldowns
+    def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[bool, int, int]: ...
+    def get_action_state(self, user_id: int, action: str) -> dict: ...
+    # admin
+    def reset_players(self) -> None: ...
+    def reset_actions(self) -> None: ...
 
 # ───────── Implémentation SQLite
 class SQLiteStorage(Storage):
@@ -30,10 +40,8 @@ class SQLiteStorage(Storage):
 
     @contextmanager
     def _conn(self):
-        # Connexion courte par opération : simple et sûr
         con = sqlite3.connect(self.db_path)
         try:
-            # Modes recommandés pour app Discord
             con.execute("PRAGMA journal_mode=WAL;")
             con.execute("PRAGMA synchronous=NORMAL;")
             con.execute("PRAGMA foreign_keys=ON;")
@@ -44,6 +52,7 @@ class SQLiteStorage(Storage):
 
     def _init_db(self):
         with self._conn() as con:
+            # Joueurs
             con.execute("""
                 CREATE TABLE IF NOT EXISTS players (
                     user_id     TEXT PRIMARY KEY,
@@ -53,7 +62,7 @@ class SQLiteStorage(Storage):
             """)
             con.execute("CREATE INDEX IF NOT EXISTS idx_players_money ON players(money DESC);")
 
-            # ── NEW: table pour cooldowns / quotas journaliers
+            # Cooldowns / quotas
             con.execute("""
                 CREATE TABLE IF NOT EXISTS actions (
                     user_id  TEXT NOT NULL,
@@ -66,7 +75,17 @@ class SQLiteStorage(Storage):
             """)
             con.execute("CREATE INDEX IF NOT EXISTS idx_actions_day ON actions(day);")
 
-    # ── API
+            # Inventaire (pour le shop & les boosts)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS inventory (
+                    user_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    qty     INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, item_id)
+                );
+            """)
+
+    # ── API joueurs
     def get_player(self, user_id: int) -> Player:
         uid = str(user_id)
         with self._conn() as con:
@@ -75,7 +94,6 @@ class SQLiteStorage(Storage):
                 (uid,)
             ).fetchone()
             if row is None:
-                # initialise le joueur
                 con.execute(
                     "INSERT INTO players(user_id, has_started, money) VALUES(?,?,?)",
                     (uid, 0, 0)
@@ -85,7 +103,6 @@ class SQLiteStorage(Storage):
             return {"has_started": bool(int(has_started)), "money": int(money)}
 
     def update_player(self, user_id: int, **fields) -> Player:
-        # lecture & merge en mémoire
         p = self.get_player(user_id)
         if "has_started" in fields:
             fields["has_started"] = int(bool(fields["has_started"]))
@@ -107,12 +124,10 @@ class SQLiteStorage(Storage):
             )
         return p
 
-    # Helpers pratiques (facultatifs mais utiles)
     def add_money(self, user_id: int, amount: int) -> Player:
         uid = str(user_id)
         amt = int(amount)
         with self._conn() as con:
-            # s'assure que le joueur existe
             con.execute(
                 "INSERT INTO players(user_id, has_started, money) VALUES(?, 0, 0) ON CONFLICT(user_id) DO NOTHING",
                 (uid,)
@@ -138,31 +153,21 @@ class SQLiteStorage(Storage):
             ).fetchall()
         return [(user_id, int(money)) for (user_id, money) in rows]
 
-    # Bonus : utile pour /debug (ne casse rien si non utilisé)
     def count_players(self) -> int:
         with self._conn() as con:
             (n,) = con.execute("SELECT COUNT(*) FROM players").fetchone()
         return int(n)
 
+    # ── Jour logique Europe/Paris, reset 08:00
     def _today_str(self) -> str:
-        """
-        Jour de jeu basé sur Europe/Paris avec coupure à 08:00.
-        Avant 08:00, on considère que ça appartient encore à la veille.
-        """
         tz = ZoneInfo("Europe/Paris")
         now = datetime.now(tz)
         reset_hour = 8
         anchor = now if now.hour >= reset_hour else (now - timedelta(days=1))
         return anchor.strftime("%Y-%m-%d")
 
-    def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[
-        bool, int, int]:
-        """
-        Vérifie cooldown + quota et consomme 1 utilisation si OK.
-        Retourne (ok, wait_seconds, remaining_today).
-          - ok=False & wait>0  -> cooldown restant
-          - ok=False & remaining_today=0 -> quota du jour atteint
-        """
+    # ── Cooldowns / quotas
+    def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[bool, int, int]:
         uid = str(user_id)
         now = int(time.time())
         today = self._today_str()
@@ -173,7 +178,6 @@ class SQLiteStorage(Storage):
             ).fetchone()
 
             if row is None:
-                # première utilisation -> crée l’entrée et consomme 1
                 con.execute(
                     "INSERT INTO actions(user_id, action, last_ts, day, count) VALUES(?,?,?,?,?)",
                     (uid, action, now, today, 1)
@@ -182,21 +186,17 @@ class SQLiteStorage(Storage):
 
             last_ts, day, count = int(row[0]), str(row[1]), int(row[2])
 
-            # nouveau jour -> reset du compteur
             if day != today:
                 day = today
                 count = 0
 
-            # quota ?
             if count >= daily_cap:
                 return False, 0, 0
 
-            # cooldown ?
             wait = (last_ts + cooldown_s) - now
             if wait > 0:
                 return False, wait, max(0, daily_cap - count)
 
-            # OK -> consomme 1
             count += 1
             con.execute(
                 "UPDATE actions SET last_ts=?, day=?, count=? WHERE user_id=? AND action=?",
@@ -205,10 +205,6 @@ class SQLiteStorage(Storage):
             return True, 0, max(0, daily_cap - count)
 
     def get_action_state(self, user_id: int, action: str) -> dict:
-        """
-        Petit helper de debug/affichage.
-        Retourne: { 'day': str, 'count': int, 'last_ts': int } ou défauts.
-        """
         uid = str(user_id)
         with self._conn() as con:
             row = con.execute(
@@ -218,3 +214,49 @@ class SQLiteStorage(Storage):
         if row is None:
             return {"day": self._today_str(), "count": 0, "last_ts": 0}
         return {"last_ts": int(row[0]), "day": str(row[1]), "count": int(row[2])}
+
+    # ── Inventaire (shop)
+    def get_inventory(self, user_id: int) -> dict[str, int]:
+        uid = str(user_id)
+        with self._conn() as con:
+            rows = con.execute("SELECT item_id, qty FROM inventory WHERE user_id=?", (uid,)).fetchall()
+        return {item_id: int(qty) for (item_id, qty) in rows}
+
+    def add_item(self, user_id: int, item_id: str, qty: int = 1) -> None:
+        if qty <= 0:
+            return
+        uid = str(user_id)
+        with self._conn() as con:
+            con.execute("""
+                INSERT INTO inventory(user_id, item_id, qty)
+                VALUES(?, ?, ?)
+                ON CONFLICT(user_id, item_id) DO UPDATE SET qty = qty + excluded.qty
+            """, (uid, item_id, int(qty)))
+
+    def get_money(self, user_id: int) -> int:
+        return int(self.get_player(user_id)["money"])
+
+    def try_spend(self, user_id: int, amount: int) -> bool:
+        """Débit atomique si solde suffisant. Retourne True/False."""
+        uid = str(user_id)
+        amt = int(amount)
+        if amt <= 0:
+            return True
+        with self._conn() as con:
+            row = con.execute("SELECT money FROM players WHERE user_id=?", (uid,)).fetchone()
+            if not row:
+                return False
+            cur = int(row[0])
+            if cur < amt:
+                return False
+            con.execute("UPDATE players SET money = money - ? WHERE user_id=?", (amt, uid))
+        return True
+
+    # ── Admin helpers (pour /admin reset)
+    def reset_players(self) -> None:
+        with self._conn() as con:
+            con.execute("DELETE FROM players;")
+
+    def reset_actions(self) -> None:
+        with self._conn() as con:
+            con.execute("DELETE FROM actions;")
