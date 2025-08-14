@@ -1,7 +1,7 @@
 from __future__ import annotations
 import random
 import time
-import datetime as _dt
+from datetime import datetime, UTC, timedelta
 import discord
 from discord import app_commands, Interaction
 
@@ -38,8 +38,8 @@ def _progress_bar(elapsed: int, total: int, width: int = 10) -> tuple[str, int]:
     return bar, int(pct * 100)
 
 def _next_utc_midnight_epoch() -> int:
-    now = _dt.datetime.utcnow()
-    nxt = (now + _dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    now = datetime.now(UTC)
+    nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return int(nxt.timestamp())
 
 def _cooldown_message(storage, user_id: int, action: str, wait: int, remaining: int, total_cd: int) -> str:
