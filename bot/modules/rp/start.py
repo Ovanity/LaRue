@@ -121,7 +121,10 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         # Couleur choisie selon l'utilisateur (stable mais variée)
         color = PALETTE[inter.user.id % len(PALETTE)]
 
-        embed = Embed(title=WELCOME_TITLE, color=color)
+        embed = Embed(
+            title=f"🌆 **Bienvenue dans LaRue.exe, {inter.user.display_name}**",
+            color=color
+        )
         # Une seule colonne claire + espace entre sections
         embed.add_field(name="Introduction", value=WELCOME_INTRO + "\n\u200b", inline=False)
         embed.add_field(name="Code de LaRue.exe", value=WELCOME_RULES + "\n\u200b", inline=False)
