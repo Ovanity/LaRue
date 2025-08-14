@@ -29,7 +29,8 @@ MODULES = [
     "bot.modules.system.health",
     "bot.modules.admin.admin",
     "bot.modules.rp.start",
-    "bot.modules.rp.economy",   # ou bot.modules.rp.hess si tu utilises le groupe /hess
+    "bot.modules.rp.economy",
+    "bot.modules.rp.shop", # ou bot.modules.rp.hess si tu utilises le groupe /hess
 ]
 
 def _call_with_best_signature(fn, *args):
