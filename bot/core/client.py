@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import tasks
 
 from .config import settings
-from .storage import SQLiteStorage   # change si tu veux un switch
+from .storage import SQLiteStorage
 
 # ── Storage
 storage = SQLiteStorage(settings.data_dir)
@@ -30,7 +30,8 @@ MODULES = [
     "bot.modules.admin.admin",
     "bot.modules.rp.start",
     "bot.modules.rp.economy",
-    "bot.modules.rp.shop", # ou bot.modules.rp.hess si tu utilises le groupe /hess
+    "bot.modules.rp.shop",
+    "bot.modules.system.sysinfo",
 ]
 
 def _call_with_best_signature(fn, *args):
