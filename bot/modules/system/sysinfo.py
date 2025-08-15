@@ -19,13 +19,13 @@ STARTED_AT = time.time()  # approximation du démarrage du bot (process)
 # Helpers formatage
 # ─────────────────────────────
 def _fmt_bytes(n: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
     f = float(n)
     for u in units:
         if f < 1024.0:
             return f"{f:.1f} {u}"
         f /= 1024.0
-    return f"{f:.1f} EB"
+    return f"{f:.1f} ZB"
 
 def _uptime_str(seconds: int) -> str:
     seconds = int(max(0, seconds))
@@ -56,19 +56,34 @@ def _sys_uptime() -> str:
     except Exception:
         return "n/a"
 
-def _cpu_load() -> str:
-    # charge moyenne si dispo (Unix)
+def _cpu_overview() -> str:
+    """
+    Retourne '12% — load: 0.23 0.45 0.50' si possible,
+    sinon '12%' ou 'load: ...' ou 'n/a'.
+    """
+    pct_str = None
+    load_str = None
+
+    if psutil:
+        try:
+            pct = psutil.cpu_percent(interval=0.2)
+            pct_str = f"{pct:.0f}%"
+        except Exception:
+            pct_str = None
+
     try:
         load1, load5, load15 = os.getloadavg()
-        return f"{load1:.2f} {load5:.2f} {load15:.2f}"
+        load_str = f"load: {load1:.2f} {load5:.2f} {load15:.2f}"
     except Exception:
-        # sur Windows, psutil peut aider
-        if psutil:
-            try:
-                return f"{psutil.cpu_percent(interval=0.2):.0f}%"
-            except Exception:
-                pass
-        return "n/a"
+        load_str = None
+
+    if pct_str and load_str:
+        return f"{pct_str} — {load_str}"
+    if pct_str:
+        return pct_str
+    if load_str:
+        return load_str
+    return "n/a"
 
 def _mem_info() -> str:
     if psutil:
@@ -77,7 +92,6 @@ def _mem_info() -> str:
             return f"{_fmt_bytes(int(v.used))} / {_fmt_bytes(int(v.total))} ({v.percent:.0f}%)"
         except Exception:
             pass
-    # fallback très basique
     return "n/a"
 
 def _disk_info() -> str:
@@ -89,7 +103,7 @@ def _disk_info() -> str:
         return "n/a"
 
 def _ip_info() -> str:
-    # Pas d'appel externe : on se limite au hostname/IP locale
+    # Pas d'appel externe : hostname/IP locale uniquement
     try:
         host = socket.gethostname()
         ip = socket.gethostbyname(host)
@@ -105,24 +119,28 @@ def _proc_count() -> str:
             pass
     return "n/a"
 
+def _now_utc_hms() -> str:
+    # Remplace datetime.utcnow() -> timezone-aware
+    return datetime.now(UTC).strftime("%H:%M:%S UTC")
+
 
 # ─────────────────────────────
 # Commande
 # ─────────────────────────────
 def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object], client: discord.Client):
-    @tree.command(name="sysinfo", description="Dashboard système & bot (avec logs en temps réel)")
+    @tree.command(name="sysinfo", description="Dashboard système & bot (rafraîchi en direct)")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def sysinfo(inter: Interaction):
-        # Récup métriques “instant”
         pyver = platform.python_version()
         uname = platform.uname()
         bot_ping_ms = int(getattr(client, "latency", 0.0) * 1000)
 
         embed = discord.Embed(
             title="🛰️ LaRue.exe — SysInfo",
-            description="Diagnostic en cours… *stand by*",
+            description="Diagnostic en cours…",
             color=discord.Color.dark_teal()
         )
+        # Bloc Bot
         embed.add_field(
             name="Bot",
             value=(
@@ -134,11 +152,12 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             ),
             inline=False
         )
+        # Bloc Système
         embed.add_field(
             name="Système",
             value=(
                 f"• **OS**: `{uname.system} {uname.release}` `{uname.machine}`\n"
-                f"• **CPU**: `{_cpu_load()}` (load/%)\n"
+                f"• **CPU**: `{_cpu_overview()}`\n"
                 f"• **RAM**: `{_mem_info()}`\n"
                 f"• **Disk**: `{_disk_info()}`\n"
                 f"• **Uptime OS**: `{_sys_uptime()}`\n"
@@ -147,40 +166,35 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             ),
             inline=False
         )
-
-        # zone “console” qui sera mise à jour
-        console_lines = [
-            "boot > init modules…",
-            "net  > opening sockets…",
-            "db   > warming up cache…",
-        ]
+        # Bloc Console (reflète de vraies stats à chaque refresh)
+        console_lines: list[str] = []
         embed.add_field(
             name="Console",
-            value="```log\n" + "\n".join(console_lines) + "\n```",
+            value="```log\ncollecting metrics…\n```",
             inline=False
         )
-        # ✅ timezone-aware (remplace datetime.utcnow)
-        embed.set_footer(text=f"Emitted @ {datetime.now(UTC).strftime('%H:%M:%S UTC')} • stay low-key")
+        embed.set_footer(text=f"Emitted @ {_now_utc_hms()} • byMartin")
 
         await inter.response.send_message(embed=embed)
         msg = await inter.original_response()
 
-        # ── Simulation de “live logs” (3 edits)
-        steps = [
-            ["ok   > modules ready", "ok   > sockets bound", "ok   > cache primed"],
-            ["scan > ports: 80, 443…", "scan > nothing spicy (pour l’instant)"],
-            [f"ws   > ping {int(getattr(client,'latency',0.0)*1000)}ms stable", "final> system nominal • enjoy"],
-        ]
+        # 3 rafraîchissements “live”, avec mesures réelles
+        for _ in range(3):
+            await asyncio.sleep(1.2)
 
-        for chunk in steps:
-            await asyncio.sleep(1.2)  # petit délai pour le show
-            console_lines.extend(chunk)
-            # On rafraîchit aussi quelques métriques “vivantes”
+            # Mesures “vivantes”
+            bot_ping_ms = int(getattr(client, "latency", 0.0) * 1000)
+            cpu = _cpu_overview()
+            ram = _mem_info()
+            disk = _disk_info()
+            procs = _proc_count()
+
+            # Met à jour les blocs
             embed.set_field_at(
                 0,
                 name="Bot",
                 value=(
-                    f"• **Ping WS**: `{int(getattr(client,'latency',0.0)*1000)} ms`\n"
+                    f"• **Ping WS**: `{bot_ping_ms} ms`\n"
                     f"• **Uptime**: `{_bot_uptime()}`\n"
                     f"• **Guilds**: `{len(getattr(client, 'guilds', []))}`\n"
                     f"• **Cmds**: `{len(getattr(tree, 'commands', []))}`\n"
@@ -189,19 +203,37 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
                 inline=False
             )
             embed.set_field_at(
-                2,
-                name="Console",
-                value="```log\n" + "\n".join(console_lines[-12:]) + "\n```",
+                1,
+                name="Système",
+                value=(
+                    f"• **OS**: `{uname.system} {uname.release}` `{uname.machine}`\n"
+                    f"• **CPU**: `{cpu}`\n"
+                    f"• **RAM**: `{ram}`\n"
+                    f"• **Disk**: `{disk}`\n"
+                    f"• **Uptime OS**: `{_sys_uptime()}`\n"
+                    f"• **Host/IP**: `{_ip_info()}`\n"
+                    f"• **Proc.**: `{procs}`"
+                ),
                 inline=False
             )
-            # timestamp à jour (UTC)
-            embed.set_footer(text=f"Emitted @ {datetime.now(UTC).strftime('%H:%M:%S UTC')} • stay low-key")
+
+            # Ligne “logs” réalistes
+            console_lines.append(
+                f"{_now_utc_hms()} | ws:{bot_ping_ms}ms | cpu:{cpu} | ram:{ram} | disk:{disk} | proc:{procs}"
+            )
+            embed.set_field_at(
+                2,
+                name="Console",
+                value="```log\n" + "\n".join(console_lines[-10:]) + "\n```",
+                inline=False
+            )
+
+            embed.set_footer(text=f"Emitted @ {_now_utc_hms()} • byMartin")
             await msg.edit(embed=embed)
 
 
-# Ancien style de compat éventuelle
+# Ancienne compat éventuelle
 def setup_system_debug(tree: app_commands.CommandTree, storage, guild_id: int):
     guild_obj = discord.Object(id=guild_id) if guild_id else None
-    # On ne dépend pas de storage ici, on passe client=None ⇒ ping affichera 0ms
     dummy_client = discord.Client(intents=discord.Intents.none())
     register(tree, guild_obj, dummy_client)
