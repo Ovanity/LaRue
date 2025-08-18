@@ -162,11 +162,9 @@ def poches_action(storage, user_id: int) -> discord.Embed:
     money_cents = storage.get_money(user_id)
 
     embed = discord.Embed(
-        title="💸 Tes poches trouées",
         description=f"En fouillant un peu, t’arrives à racler : **{fmt_eur(money_cents)}**",
         color=discord.Color.dark_gold()
     )
-    embed.set_footer(text="LaRue.exe — Garde la monnaie au chaud, reuf.")
     return embed
 
 # ───────── Slash ─────────
