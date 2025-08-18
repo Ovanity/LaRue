@@ -1,0 +1,33 @@
+.
+├── bot
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── core
+│   │   ├── client.py
+│   │   ├── config.py
+│   │   ├── storage.py
+│   │   └── utils.py
+│   └── modules
+│       ├── __init__.py
+│       ├── admin
+│       │   └── admin.py
+│       ├── common
+│       │   ├── __init__.py
+│       │   └── money.py
+│       ├── rp
+│       │   ├── __init__.py
+│       │   ├── betting.py
+│       │   ├── boosts.py
+│       │   ├── combat.py
+│       │   ├── economy.py
+│       │   ├── items.py
+│       │   ├── shop.py
+│       │   └── start.py
+│       └── system
+│           ├── health.py
+│           └── sysinfo.py
+├── data
+├── requirements.txt
+└── tree.txt
+
+9 directories, 22 files

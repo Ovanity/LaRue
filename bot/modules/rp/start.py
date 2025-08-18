@@ -4,7 +4,7 @@ from discord import app_commands, Interaction, Embed
 
 # ——— Actions & constantes depuis economy (on garde une seule source de vérité)
 from bot.modules.rp.economy import (
-    mendier_action, fouiller_action, stats_action,
+    mendier_action, fouiller_action, poches_action,
     MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP,
     FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP,
 )
@@ -112,7 +112,7 @@ class StartView(discord.ui.View):
         res = fouiller_action(storage, inter.user.id)
         await inter.response.send_message(res["msg"])
 
-    @discord.ui.button(label="📊 Stats", style=discord.ButtonStyle.secondary, custom_id="start_stats")
+    @discord.ui.button(label="💸 Poches", style=discord.ButtonStyle.secondary, custom_id="start_poches")
     async def btn_stats(self, inter: Interaction, _: discord.ui.Button):
         if not await self._guard(inter):
             return
@@ -121,7 +121,7 @@ class StartView(discord.ui.View):
         if not p or not p.get("has_started"):
             await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
             return
-        await inter.response.send_message(stats_action(storage, inter.user.id))
+        await inter.response.send_message(poches_action(storage, inter.user.id))
 
 
 # ─────────────────────────────

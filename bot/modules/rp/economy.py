@@ -158,11 +158,16 @@ def fouiller_action(storage, user_id: int) -> dict:
 
     return msg
 
-def stats_action(storage, user_id: int) -> str:
-    p = storage.get_player(user_id)
-    if not p or not p.get("has_started"):
-        return "🚀 Tu n'as pas encore commencé ton aventure. Utilise **/start** pour débuter !"
-    return f"💼 Argent: {fmt_eur(p['money'])}"
+def poches_action(storage, user_id: int) -> discord.Embed:
+    money_cents = storage.get_money(user_id)
+
+    embed = discord.Embed(
+        title="💸 Tes poches trouées",
+        description=f"En fouillant un peu, t’arrives à racler : **{fmt_eur(money_cents)}**",
+        color=discord.Color.dark_gold()
+    )
+    embed.set_footer(text="LaRue.exe — Garde la monnaie au chaud, reuf.")
+    return embed
 
 # ───────── Slash ─────────
 def _build_group() -> app_commands.Group:
@@ -223,13 +228,13 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
         embed.set_footer(text="Top 10 — riche aujourd’hui, pauvre demain…")
         await inter.response.send_message(embed=embed, ephemeral=False)
 
-    @tree.command(name="stats", description="Tes stats")
+    @tree.command(name="poches", description="Check ce qu’il te reste dans les poches")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
-    async def stats(inter: Interaction):
+    async def poches(inter: Interaction):
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
         await inter.response.send_message(
-            stats_action(storage, inter.user.id),
+            poches_action(storage, inter.user.id),
             ephemeral=not (p and p.get("has_started"))
         )
 
