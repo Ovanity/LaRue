@@ -1,170 +1,146 @@
 # bot/modules/rp/tabac.py
 from __future__ import annotations
-import random, asyncio, time
-from datetime import datetime, UTC, timedelta
+import asyncio
+import random
 from typing import Optional
 
 import discord
 from discord import app_commands, Interaction
-from zoneinfo import ZoneInfo
 
 from bot.modules.common.money import fmt_eur
-from bot.modules.rp.boosts import compute_power
-from bot.modules.rp.economy import check_limit  # alias public de _check_limit
 
-# ───────────────────────────
-# Réglages Tabac (centimes)
-# ───────────────────────────
-TABAC_COOLDOWN_S = 45         # 45s entre tickets
-TABAC_DAILY_CAP  = 10         # 20 tickets / jour / joueur
-
-# Tickets: prix + distribution pondérée (poids sur 100000) ~RTP 65–75%
+# ───────────────────────────────────────────────────────────────────
+# Tickets (prix en centimes) — proba ~ inspirées FDJ mais adaptées à l'économie du jeu
+# Chaque ticket a un pool de gains (en centimes) avec des poids.
+# L'espérance reste < prix pour la santé de l'économie.
+# ───────────────────────────────────────────────────────────────────
 TICKETS: dict[str, dict] = {
-    "ruelle": {   # 0,50 €
-        "name": "Gratt'Ruelle",
-        "price": 50,
-        "weights": {
-            0:       64000,
-            50:      24000,
-            100:      8500,
-            200:      2800,
-            500:       600,
-            1000:      90,
-            5000:      10,
-        },
+    "micro": {
+        "name": "Micro-Gratte",
+        "price": 50,  # 0,50€
+        "pool": [
+            # (gain_cents, poids)
+            (0, 65),
+            (10, 10), (20, 8), (30, 6), (50, 4),      # petits lots (souvent < prix)
+            (100, 3), (150, 2),                        # moyens
+            (500, 2), (1000, 0.5),                     # 5€ | 10€
+        ],
+        "emoji": "🟩",
+        "desc": "Gratte-vite pas cher. De temps en temps, un café payé.",
     },
-    "banco": {    # 1,00 €
-        "name": "Banco du coin",
-        "price": 100,
-        "weights": {
-            0:       65000,
-            100:     23000,
-            200:      9000,
-            500:      2500,
-            1000:      430,
-            5000:       60,
-            10000:      10,
-        },
+    "poche": {
+        "name": "Jackpot de Poche",
+        "price": 200,  # 2,00€
+        "pool": [
+            (0, 70),
+            (50, 8), (100, 7), (150, 5), (200, 4),
+            (400, 3), (600, 1.8), (1000, 1.0),
+            (2500, 0.6), (5000, 0.4),                  # 25€ | 50€
+        ],
+        "emoji": "🟦",
+        "desc": "Format poche, peut tomber un petit billet.",
     },
-    "cash": {     # 2,00 €
-        "name": "CASH Biff",
-        "price": 200,
-        "weights": {
-            0:       62000,
-            200:     25000,
-            400:      9000,
-            1000:     2800,
-            2000:      900,
-            5000:      250,
-            10000:      40,
-            20000:      10,
-        },
-    },
-    "jackpot": {  # 5,00 €
-        "name": "Jackpot Tabac",
-        "price": 500,
-        "weights": {
-            0:       65000,
-            500:     23200,
-            1000:     8000,
-            2000:     2400,
-            5000:      900,
-            10000:     350,
-            20000:      100,
-            50000:       40,
-            100000:      10,
-        },
+    "trottoir": {
+        "name": "Loto Trottoir",
+        "price": 500,  # 5,00€
+        "pool": [
+            (0, 75),
+            (100, 7), (200, 5), (300, 4), (500, 3),
+            (1000, 2.5), (1500, 1.5), (3000, 1.0),
+            (10000, 0.5), (20000, 0.3),                # 100€ | 200€
+        ],
+        "emoji": "🟪",
+        "desc": "Le gros délire. Rarement la folie, parfois la paye.",
     },
 }
 
-# ───────────────────────────
-# Helpers
-# ───────────────────────────
-def _rtp(weights: dict[int,int], price: int) -> float:
-    exp = sum(int(p)*int(w) for p,w in weights.items())/100000.0
-    return (exp/max(1,price))*100.0
+TABAC_COOLDOWN_S = 5  # anti-spam léger pour /tabac
 
-def _next_reset_epoch(tz="Europe/Paris", hour=8) -> int:
-    now = datetime.now(ZoneInfo(tz))
-    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-    if now >= target:
-        target += timedelta(days=1)
-    return int(target.astimezone(UTC).timestamp())
 
-def _draw_prize(weights: dict[int,int], power: dict) -> int:
-    w = dict(weights)
-    bias_small = int(float(power.get("tabac_bias_small", 0)))
-    if bias_small and 0 in w and w[0] > bias_small:
-        small_keys = [k for k in w if 0 < k <= 1000]
-        if small_keys:
-            take = min(bias_small, w[0]-1)
-            w[0] -= take
-            add_each = max(1, take//len(small_keys))
-            for k in small_keys: w[k] += add_each
+# ───────────────────────────────────────────────────────────────────
+# Helpers storage-safe
+# ───────────────────────────────────────────────────────────────────
+def _get_money(storage, user_id: int) -> int:
+    if hasattr(storage, "get_money"):
+        return int(storage.get_money(user_id))
+    return int(storage.get_player(user_id)["money"])
 
-    roll = random.randint(1, 100000)
-    acc, picked = 0, 0
-    for prize, wt in sorted(w.items(), key=lambda kv: kv[1], reverse=True):
-        acc += int(wt)
-        if roll <= acc:
-            picked = int(prize)
-            break
+def _try_spend(storage, user_id: int, amount: int) -> bool:
+    amt = int(amount)
+    if amt <= 0:
+        return True
+    if hasattr(storage, "try_spend"):
+        return bool(storage.try_spend(user_id, amt))
+    p = storage.get_player(user_id)
+    if p["money"] < amt:
+        return False
+    storage.update_player(user_id, money=p["money"] - amt)
+    return True
 
-    mult = float(power.get("tabac_mult", 1.0))
-    return int(round(picked*mult)) if picked>0 else 0
+def _add_money(storage, user_id: int, amount: int) -> int:
+    if hasattr(storage, "add_money"):
+        return storage.add_money(user_id, int(amount))["money"]
+    p = storage.get_player(user_id)
+    return storage.update_player(user_id, money=p["money"] + int(amount))["money"]
 
-def _progress(pct: int, width=10) -> str:
-    filled = max(0, min(width, (pct*width)//100))
-    return "█"*filled + "─"*(width-filled)
+def _touch_cooldown(storage, user_id: int) -> tuple[bool, Optional[str]]:
+    if hasattr(storage, "check_and_touch_action"):
+        ok, wait, remaining = storage.check_and_touch_action(user_id, "tabac", TABAC_COOLDOWN_S, 999999)
+        if not ok:
+            return False, f"⏳ Laisse chauffer la monnaie… reviens <t:{int(asyncio.get_running_loop().time()) + int(wait)}:R>."
+    return True, None
 
-# ───────────────────────────
-# Vue interactive
-# ───────────────────────────
+def _weight_pick(pool: list[tuple[int, float]]) -> int:
+    # random.choices pour poids flottants
+    gains, weights = zip(*pool)
+    return int(random.choices(gains, weights=weights, k=1)[0])
+
+
+# ───────────────────────────────────────────────────────────────────
+# Vue
+# ───────────────────────────────────────────────────────────────────
 class TabacView(discord.ui.View):
-    def __init__(self, owner_id: int, storage, *, timeout: Optional[float]=180):
-        super().__init__(timeout=timeout)
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=120)
         self.owner_id = owner_id
-        self.storage = storage
         self.message: Optional[discord.Message] = None
-        self.current_key: str = "ruelle"
+        self.current_key: str = "micro"
+        self._locked: bool = False  # évite double-click
 
     async def _guard(self, inter: Interaction) -> bool:
         if inter.user.id != self.owner_id:
-            await inter.response.send_message("🛑 Pas ton kiosque, reuf.", ephemeral=True)
+            await inter.response.send_message("🛑 C’est pas ton ticket, reuf.", ephemeral=True)
             return False
         return True
 
-    def _base_embed(self) -> discord.Embed:
-        t = TICKETS[self.current_key]
-        price = int(t["price"])
-        rtp   = _rtp(t["weights"], price)
-        bal   = self.storage.get_money(self.owner_id)
-        state = self.storage.get_action_state(self.owner_id, "tabac") if hasattr(self.storage,"get_action_state") else {"count":0}
-        remaining = max(0, TABAC_DAILY_CAP - int(state.get("count", 0)))
-        reset_at = _next_reset_epoch()
+    def _base_embed(self, storage) -> discord.Embed:
+        ticket = TICKETS[self.current_key]
+        price = ticket["price"]
+        money = _get_money(storage, self.owner_id)
+
         e = discord.Embed(
-            title="🚬 Tabac — Comptoir à gratter",
-            color=discord.Color.green(),
+            title="🏪 Tabac du quartier",
             description=(
-                f"**Ticket :** {t['name']}\n"
-                f"**Prix :** {fmt_eur(price)} • **RTP théorique :** `{rtp:.1f}%`\n"
-                f"**Solde :** {fmt_eur(bal)}\n"
-                f"**Aujourd’hui :** {remaining} restant(s) • Reset {f'<t:{reset_at}:R>'}\n"
+                f"Ticket **{ticket['name']}** {ticket['emoji']}\n"
+                f"Prix: **{fmt_eur(price)}**  •  Ton solde: **{fmt_eur(money)}**\n"
+                f"*{ticket['desc']}*"
             ),
+            color=discord.Color.green()
         )
-        e.set_footer(text=f"Emitted @ {datetime.now(UTC).strftime('%H:%M:%S UTC')} • LaRue.exe")
+        e.set_footer(text="Gratte propre, reuf. Zéro remboursement si ça gratte le vide.")
         return e
 
-    async def _refresh(self):
+    async def refresh_embed(self, storage) -> None:
+        """⚠️ helper maison — ne pas appeler _refresh (réservé par discord.py)."""
         if self.message:
-            await self.message.edit(embed=self._base_embed(), view=self)
+            await self.message.edit(embed=self._base_embed(storage), view=self)
 
+    # ── Widgets
     @discord.ui.select(
         placeholder="Choisis ton ticket…",
-        min_values=1, max_values=1,
         options=[
-            discord.SelectOption(label=TICKETS[k]["name"], value=k, description=f"Prix {fmt_eur(TICKETS[k]['price'])}")
-            for k in ("ruelle","banco","cash","jackpot")
+            discord.SelectOption(label=TICKETS[k]["name"], value=k, description=fmt_eur(TICKETS[k]["price"]) )
+            for k in TICKETS
         ],
         custom_id="tabac_select"
     )
@@ -172,135 +148,145 @@ class TabacView(discord.ui.View):
         if not await self._guard(inter): return
         self.current_key = select.values[0]
         await inter.response.defer()
-        await self._refresh()
+        await self.refresh_embed(inter.client.storage)
 
-    @discord.ui.button(label="🎫 Acheter & gratter", style=discord.ButtonStyle.primary, custom_id="tabac_buy")
-    async def buy_and_scratch(self, inter: Interaction, _: discord.ui.Button):
+    @discord.ui.button(label="🎫 Gratter", style=discord.ButtonStyle.success, custom_id="tabac_gratter")
+    async def btn_gratter(self, inter: Interaction, _: discord.ui.Button):
         if not await self._guard(inter): return
-        await inter.response.defer()
-        key = self.current_key
-        t = TICKETS.get(key)
-        if not t:
-            await inter.followup.send("❌ Ticket introuvable.", ephemeral=True); return
+        storage = inter.client.storage
 
-        ok, msg = check_limit(self.storage, self.owner_id, "tabac", TABAC_COOLDOWN_S, TABAC_DAILY_CAP)
-        if not ok:
-            await inter.followup.send(msg, ephemeral=True); return
-
-        price = int(t["price"])
-        if not self.storage.try_spend(self.owner_id, price):
-            bal = self.storage.get_money(self.owner_id)
-            await inter.followup.send(f"💸 Pas assez. Prix: {fmt_eur(price)} • Solde: {fmt_eur(bal)}", ephemeral=True)
+        # anti-spam léger
+        ok_cd, msg_cd = _touch_cooldown(storage, inter.user.id)
+        if not ok_cd:
+            await inter.response.send_message(msg_cd or "⏳ Attends un peu.", ephemeral=True)
             return
 
-        if not self.message:
-            self.message = await inter.original_response()
+        if self._locked:
+            await inter.response.send_message("⏳ Déjà en train de gratter…", ephemeral=True)
+            return
+        self._locked = True
 
-        # frame 1 — préparation
-        bal0 = self.storage.get_money(self.owner_id)
-        embed = discord.Embed(
-            title=f"🎫 {t['name']}",
-            description=(
-                "```\n"
-                "┌───────────────┐\n"
-                "│  ▒ ▒ ▒  ▒ ▒ ▒ │   grattage en cours…\n"
-                "│  ▒ ▒ ▒  ▒ ▒ ▒ │\n"
-                "│  ▒ ▒ ▒  ▒ ▒ ▒ │\n"
-                "└───────────────┘\n"
-                "```"
-            ),
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="Ticket", value=fmt_eur(price))
-        embed.add_field(name="Solde",  value=fmt_eur(bal0))
-        await self.message.edit(embed=embed, view=self)
-        await asyncio.sleep(0.9)
-
-        # tirage
-        power = compute_power(self.storage, self.owner_id) if callable(compute_power) else {}
-        win = _draw_prize(t["weights"], power)
-
-        # frame 2 — reveal partiel
-        for pct in (35, 70, 100):
-            bar = _progress(pct)
-            embed.description = (
-                "```\n"
-                "┌───────────────┐\n"
-                f"│  {bar[:3]} {bar[3:6]} {bar[6:]} │   grattage {pct}%\n"
-                "│  ▒ ▒ ▒  ▒ ▒ ▒ │\n"
-                "│  ▒ ▒ ▒  ▒ ▒ ▒ │\n"
-                "└───────────────┘\n"
-                "```"
+        ticket = TICKETS[self.current_key]
+        price = int(ticket["price"])
+        money_before = _get_money(storage, inter.user.id)
+        if money_before < price:
+            self._locked = False
+            await inter.response.send_message(
+                f"💸 Il te manque **{fmt_eur(price - money_before)}** pour ce ticket.",
+                ephemeral=True
             )
-            await self.message.edit(embed=embed, view=self)
-            await asyncio.sleep(0.35)
+            return
 
-        # résultat & solde final
-        if win > 0:
-            self.storage.add_money(self.owner_id, win)
-            net = win - price
-            color = discord.Color.gold()
-            result = f"**Gagné : {fmt_eur(win)}**  •  Net: {fmt_eur(net)} 🎉"
+        # débit
+        if not _try_spend(storage, inter.user.id, price):
+            self._locked = False
+            await inter.response.send_message("💳 Paiement refusé, reviens avec des biftons.", ephemeral=True)
+            return
+
+        # Animation de grattage
+        cover = "▩"  # tu peux essayer "░", "▒", "▩"
+        rows = [
+            [cover, cover, cover],
+            [cover, cover, cover],
+            [cover, cover, cover],
+        ]
+        symbols_pool = ["🍀", "⭐", "💎", "7️⃣", "🧧"]
+        # résultat de “gain”
+        gain_cents = _weight_pick(ticket["pool"])
+
+        # Règle simple d’affichage : si gain>0, on force au moins 3 symboles identiques sur une ligne
+        if gain_cents > 0:
+            sym = random.choice(symbols_pool)
+            line = random.randrange(3)
+            rows[line] = [sym, sym, sym]
+            # remplit le reste aléatoirement
+            for r in range(3):
+                for c in range(3):
+                    if rows[r][c] == cover:
+                        rows[r][c] = random.choice(symbols_pool)
         else:
-            net = -price
-            color = discord.Color.dark_grey()
-            result = f"Perdu… (− {fmt_eur(price)})"
+            # tout aléatoire (perdant)
+            rows = [[random.choice(symbols_pool) for _ in range(3)] for __ in range(3)]
 
-        bal1 = self.storage.get_money(self.owner_id)
-        embed = discord.Embed(
-            title=f"🎫 {t['name']}",
-            description=result,
-            color=color
+        # 1) message initial
+        e = self._base_embed(storage)
+        e.add_field(
+            name="Carte",
+            value="```\n" + "\n".join(" ".join(row if isinstance(row, list) else row) for row in [["▩ ▩ ▩"],["▩ ▩ ▩"],["▩ ▩ ▩"]]) + "\n```",
+            inline=False
         )
-        embed.set_footer(text=f"Solde: {fmt_eur(bal1)} • {datetime.now(UTC).strftime('%H:%M:%S UTC')}")
-        await self.message.edit(embed=embed, view=self)
+        await inter.response.send_message(embed=e)
+        msg = await inter.original_response()
 
-        if hasattr(self.storage, "increment_stat"):
-            self.storage.increment_stat(self.owner_id, "tabac_count", 1)
+        # 2) 3 révélations progressives
+        for step in range(3):
+            await asyncio.sleep(0.8)
+            reveal = []
+            for r in range(3):
+                line = []
+                for c in range(3):
+                    # révèle colonne par colonne
+                    line.append(rows[r][c] if c <= step else cover)
+                reveal.append(" ".join(line))
+            e = self._base_embed(storage)
+            e.add_field(name="Carte", value="```\n" + "\n".join(reveal) + "\n```", inline=False)
+            await msg.edit(embed=e)
 
-    async def on_timeout(self):
-        for c in self.children:
-            if hasattr(c, "disabled"): c.disabled = True
+        # 3) résultat & crédit éventuel
+        if hasattr(storage, "increment_stat"):
+            storage.increment_stat(inter.user.id, "tabac_count", 1)
+
+        final_money = _add_money(storage, inter.user.id, gain_cents)  # si 0 => no-op
+
+        res_text = (
+            f"🎉 **Gagné {fmt_eur(gain_cents)} !**" if gain_cents > 0
+            else "😬 Rien du tout… la chance reviendra."
+        )
+        e = self._base_embed(storage)
+        e.add_field(
+            name="Carte",
+            value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
+            inline=False
+        )
+        e.add_field(
+            name="Résultat",
+            value=f"{res_text}\n**Solde**: {fmt_eur(final_money)}",
+            inline=False
+        )
+        await msg.edit(embed=e)
+
+        self._locked = False
+
+    async def on_timeout(self) -> None:
+        # À la fin, on désactive tout
+        for child in self.children:
+            if hasattr(child, "disabled"):
+                child.disabled = True
         if self.message:
             try:
-                e = self._base_embed()
-                e.color = discord.Color.dark_grey()
-                e.description = (e.description or "") + "\n\n`Kiosque endormi… rouvre la commande pour continuer.`"
+                e = discord.Embed(
+                    description="⏳ Le kiosque a fermé. Rouvre /tabac pour rejouer.",
+                    color=discord.Color.dark_grey()
+                )
                 await self.message.edit(embed=e, view=None)
             except discord.NotFound:
                 pass
 
-# ───────────────────────────
-# Slash commands
-# ───────────────────────────
-tabac = app_commands.Group(name="tabac", description="Le tabac du coin — tickets à gratter.")
 
-@tabac.command(name="kiosque", description="Ouvre le comptoir à gratter (tickets + animations)")
-async def tabac_kiosque(inter: Interaction):
-    storage = inter.client.storage
-    p = storage.get_player(inter.user.id)
-    if not p or not p.get("has_started"):
-        await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
-        return
+# ───────────────────────────────────────────────────────────────────
+# Commande
+# ───────────────────────────────────────────────────────────────────
+def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object], client: discord.Client | None = None):
+    @tree.command(name="tabac", description="Kiosque à tickets à gratter")
+    @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
+    async def tabac(inter: Interaction):
+        storage = inter.client.storage
+        p = storage.get_player(inter.user.id)
+        if not p or not p.get("has_started"):
+            await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
+            return
 
-    view = TabacView(inter.user.id, storage)
-    embed = view._base_embed()
-    await inter.response.send_message(embed=embed, view=view)
-    view.message = await inter.original_response()
-
-@tabac.command(name="liste", description="Liste des tickets disponibles (prix & RTP)")
-async def tabac_liste(inter: Interaction):
-    lines = []
-    for key, t in TICKETS.items():
-        price = int(t["price"]); rtp = _rtp(t["weights"], price)
-        lines.append(f"**{t['name']}** — Prix: {fmt_eur(price)} • RTP théorique: `{rtp:.1f}%`  → `/tabac kiosque`")
-    embed = discord.Embed(
-        title="🚬 Tabac — Tickets",
-        description="\n\n".join(lines),
-        color=discord.Color.blurple()
-    )
-    await inter.response.send_message(embed=embed, ephemeral=True)
-
-def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object], client: Optional[discord.Client]=None):
-    if guild_obj: tree.add_command(tabac, guild=guild_obj)
-    else:         tree.add_command(tabac)
+        view = TabacView(inter.user.id)
+        embed = view._base_embed(storage)
+        await inter.response.send_message(embed=embed, view=view)
+        view.message = await inter.original_response()
