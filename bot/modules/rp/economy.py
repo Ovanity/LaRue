@@ -233,10 +233,8 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
     async def poches(inter: Interaction):
         storage = inter.client.storage
         p = storage.get_player(inter.user.id)
-        await inter.response.send_message(
-            poches_action(storage, inter.user.id),
-            ephemeral=not (p and p.get("has_started"))
-        )
+        embed = poches_action(storage, inter.user.id)  # ← construit l'embed
+        await inter.response.send_message(embed=embed, ephemeral=not (p and p.get("has_started")))
 
     if guild_obj:
         tree.add_command(hess, guild=guild_obj)
