@@ -32,6 +32,8 @@ MODULES = [
     "bot.modules.rp.economy",
     "bot.modules.rp.shop",
     "bot.modules.system.sysinfo",
+    " bot.modules.rp.tabac",
+
 ]
 
 def _call_with_best_signature(fn, *args):
