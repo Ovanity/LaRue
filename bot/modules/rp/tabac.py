@@ -223,19 +223,29 @@ class TabacView(discord.ui.View):
             await inter.followup.send("💳 Paiement refusé, reviens avec des biftons.", ephemeral=True)
             return
 
-        # Préparation carte
+        # Préparation carte (cohérente avec le résultat)
         cover = "▩"
         symbols_pool = ["🍀", "⭐", "💎", "7️⃣", "🧧"]
         gain_cents = _weight_pick(t["pool"])
 
-        # Grille solution (ligne gagnante si gain > 0)
+        def _rand_row_no_triple(symbols: list[str]) -> list[str]:
+            a = random.choice(symbols)
+            b = random.choice(symbols)
+            c = random.choice(symbols)
+            # Évite une ligne du type X X X pour les tickets perdants
+            while a == b == c:
+                b = random.choice(symbols)
+                c = random.choice(symbols)
+            return [a, b, c]
+
+        # Grille solution
         if gain_cents > 0:
             sym = random.choice(symbols_pool)
-            win_line = random.randrange(3)
+            win_line = random.randrange(3)  # 0..2
             rows = [[random.choice(symbols_pool) for _ in range(3)] for __ in range(3)]
-            rows[win_line] = [sym, sym, sym]
+            rows[win_line] = [sym, sym, sym]  # ligne gagnante visible
         else:
-            rows = [[random.choice(symbols_pool) for _ in range(3)] for __ in range(3)]
+            rows = [_rand_row_no_triple(symbols_pool) for _ in range(3)]  # aucune ligne 3-à-la-suite
 
         # 1) état couvert
         e = self._base_embed(storage)
@@ -264,18 +274,22 @@ class TabacView(discord.ui.View):
 
         final_money = _add_money(storage, inter.user.id, gain_cents)
 
-        # Mise / Net / code couleur
         mise = int(t["price"])
         net = gain_cents - mise
+
+        # Texte + couleur + badge explicites
         if net > 0:
-            badge = "✅"
+            badge_txt = "🟢 Profit"
             color = discord.Color.green()
         elif net == 0:
-            badge = "🟨"
+            badge_txt = "🟡 Remboursé"
             color = discord.Color.gold()
         else:
-            badge = "❌"
+            badge_txt = "🔴 Perdu"
             color = discord.Color.red()
+
+        # fmt_eur gère déjà le signe ; on préfixe uniquement le cas positif
+        net_str = fmt_eur(net) if net <= 0 else f"+{fmt_eur(net)}"
 
         e = self._base_embed(storage)
         e.color = color
@@ -289,7 +303,7 @@ class TabacView(discord.ui.View):
             value=(
                 f"• Mise : **{fmt_eur(mise)}**\n"
                 f"• Gain : **{fmt_eur(gain_cents)}**\n"
-                f"• Net  : **{('+' if net > 0 else '')}{fmt_eur(net)}** {badge}"
+                f"• Net  : **{net_str}** — {badge_txt}"
             ),
             inline=False
         )
