@@ -140,7 +140,6 @@ def _result_embed(
         name, val = _cooldown_field(storage, user_id, action_key, cooldown_s, cap)
         e.add_field(name=name, value=val, inline=False)
 
-    e.set_footer(text="LaRue.exe • Reste poli, ça paye parfois.")
     return e
 
 async def _play_anim_then_finalize(
