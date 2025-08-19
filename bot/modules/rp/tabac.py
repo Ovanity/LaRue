@@ -152,7 +152,8 @@ class TabacView(discord.ui.View):
         # Ligne infos (alignées)
         e.add_field(name="🎫 Prix", value=fmt_eur(t["price"]), inline=True)
         e.add_field(name="💰 Solde", value=solde, inline=True)
-        e.add_field(name="\u200b", value="\u200b", inline=False)  # séparateur visuel
+        # Filler pour compléter la ligne et éviter l’espace vertical
+        e.add_field(name="\u200b", value="\u200b", inline=True)
 
         e.set_footer(text="Appuie sur 🎫 Gratter — rejoue tant que t’as des BiffCoins.")
         return e
