@@ -16,33 +16,53 @@ from bot.modules.common.money import fmt_eur
 TICKETS: dict[str, dict] = {
     "micro": {
         "name": "Micro-Gratte",
-        "price": 50,   # 0,50€
+        "price": 50,   # 0,50 €
         "pool": [      # (gain_cents, poids)
-            (0, 65), (10, 10), (20, 8), (30, 6), (50, 4),
-            (100, 3), (150, 2), (500, 2), (1000, 0.5),
-        ],
+            (0, 320), (5, 90), (10, 80), (20, 120),
+            (50, 220), (100, 120), (200, 20), (500, 5),
+        ],  # EV ≈ 34c → 68%
         "emoji": "🟩",
-        "desc": "Gratte-vite pas cher. De temps en temps, un café payé.",
+        "desc": "Le gratte-vite pas cher. Souvent rien, parfois le ticket remboursé.",
+    },
+    "canette": {
+        "name": "Gratte-Canette",
+        "price": 100,  # 1,00 €
+        "pool": [
+            (0, 380), (10, 60), (20, 90), (50, 150),
+            (100, 200), (200, 90), (500, 25), (1000, 5),
+        ],  # EV ≈ 65c → 65%
+        "emoji": "🟨",
+        "desc": "Le classique du kiosque. Remboursé assez souvent, bonus occasionnels.",
     },
     "poche": {
         "name": "Jackpot de Poche",
-        "price": 200,  # 2,00€
+        "price": 200,  # 2,00 €
         "pool": [
-            (0, 70), (50, 8), (100, 7), (150, 5), (200, 4),
-            (400, 3), (600, 1.8), (1000, 1.0), (2500, 0.6), (5000, 0.4),
-        ],
+            (0, 560), (50, 60), (100, 90), (150, 80),
+            (200, 110), (400, 60), (1000, 30), (2000, 8), (5000, 2),
+        ],  # EV ≈ 1,26 € → 63%
         "emoji": "🟦",
-        "desc": "Format poche, peut tomber un petit billet.",
+        "desc": "Petit frisson à 2 €. Parfois plus qu’un remboursement.",
+    },
+    "pave": {
+        "name": "Pavé Doré",
+        "price": 300,  # 3,00 €
+        "pool": [
+            (0, 400), (100, 60), (150, 50), (200, 110),
+            (300, 180), (500, 60), (1000, 30), (2000, 8), (5000, 2),
+        ],  # EV ≈ 1,95 € → 65%
+        "emoji": "🟥",
+        "desc": "Un peu plus piquant. De vraies lignes gagnantes peuvent tomber.",
     },
     "trottoir": {
         "name": "Loto Trottoir",
-        "price": 500,  # 5,00€
+        "price": 500,  # 5,00 €
         "pool": [
-            (0, 75), (100, 7), (200, 5), (300, 4), (500, 3),
-            (1000, 2.5), (1500, 1.5), (3000, 1.0), (10000, 0.5), (20000, 0.3),
-        ],
+            (0, 800), (200, 140), (300, 130), (500, 130),
+            (1000, 120), (2000, 60), (5000, 8), (10000, 2), (20000, 1),
+        ],  # EV ≈ 3,25 € → 65%
         "emoji": "🟪",
-        "desc": "Le gros délire. Rarement la folie, parfois la paye.",
+        "desc": "Le gros ticket. Grosse variance, jackpot rarissime mais réel.",
     },
 }
 
