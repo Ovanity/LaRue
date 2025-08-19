@@ -334,12 +334,9 @@ class TabacView(discord.ui.View):
             tease = "C’était pas loin…" if near_miss else "Rien cette fois."
             e.add_field(
                 name="😶",
-                value=tease + " Re-tente pour faire mieux.",
+                value=tease + " gratte en un autre pour faire mieux.",
                 inline=False
             )
-
-        # Solde discret
-        e.add_field(name="\u200b", value=f"**Solde** : {fmt_eur(final_money)}", inline=False)
 
         self._locked = False
         self._set_gratter_disabled(False)
