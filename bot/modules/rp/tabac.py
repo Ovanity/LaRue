@@ -289,7 +289,7 @@ class TabacView(discord.ui.View):
 
         # 2) Afficher l’état couvert puis animer chaque colonne (3–5 frames rapides)
         e = self._base_embed(storage)
-        e.add_field(name="🎰 Carte", value=_render_grid(rows, 0, 0), inline=False)
+        e.add_field(name="🎰 Grattage.", value=_render_grid(rows, 0, 0), inline=False)
         if self.message:
             await self.message.edit(embed=e, view=self)
 
@@ -298,12 +298,12 @@ class TabacView(discord.ui.View):
             for _ in range(5):
                 await asyncio.sleep(0.12)
                 e = self._base_embed(storage)
-                e.add_field(name="🎰 Carte", value=_render_grid(rows, col, col), inline=False)
+                e.add_field(name="🎰 Grattage..", value=_render_grid(rows, col, col), inline=False)
                 if self.message:
                     await self.message.edit(embed=e, view=self)
             # verrouille la colonne révélée
             e = self._base_embed(storage)
-            e.add_field(name="🎰 Carte", value=_render_grid(rows, col + 1, None), inline=False)
+            e.add_field(name="🎰 Grattage...", value=_render_grid(rows, col + 1, None), inline=False)
             if self.message:
                 await self.message.edit(embed=e, view=self)
 
@@ -316,7 +316,7 @@ class TabacView(discord.ui.View):
         e = self._base_embed(storage)
         # Grille finale figée
         e.add_field(
-            name="🎰 Carte",
+            name="🎰 Résultats",
             value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
             inline=False
         )
@@ -335,7 +335,7 @@ class TabacView(discord.ui.View):
             tease = "C’était pas loin…" if near_miss else "Rien cette fois."
             e.add_field(
                 name="😶",
-                value=tease + " Gratte en un autre pour faire mieux.",
+                value=tease + " Essaye encore pour faire mieux.",
                 inline=False
             )
 
