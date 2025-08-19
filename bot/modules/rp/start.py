@@ -49,7 +49,7 @@ WELCOME_RULES = (
 WELCOME_HINTS = (
     "▶️ Clique un bouton pour commencer. "
     "Astuce : tente ta chance au tabac. "
-    "Besoin d’aide ? `/hesshelp`"
+    "Besoin d’aide ? `/LRHelp`"
 )
 
 # ─────────────────────────────
