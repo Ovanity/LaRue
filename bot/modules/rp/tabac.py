@@ -8,7 +8,14 @@ from typing import Optional
 import discord
 from discord import app_commands, Interaction
 
-from bot.modules.common.money import fmt_eur
+from bot.modules.common.money import fmt_eur, MONEY_EMOJI_NAME, MONEY_EMOJI_ID
+
+# PartialEmoji for select options (shows the real emoji, not the <:...> text)
+MONEY_PARTIAL = discord.PartialEmoji(name=MONEY_EMOJI_NAME, id=MONEY_EMOJI_ID)
+
+def _price_plain(cents: int) -> str:
+    # fmt_eur returns "12,34 <:BiffCoins:...>", we want only "12,34" for the select description
+    return fmt_eur(cents).split(" ", 1)[0]
 
 # ───────────────────────────────────────────────────────────────────
 # Tickets (prix/gains en CENTIMES)
@@ -162,16 +169,26 @@ class TabacView(discord.ui.View):
     @discord.ui.select(
         placeholder="Choisis ton ticket…",
         options=[
-            discord.SelectOption(label=TICKETS[k]["name"], value=k, description=fmt_eur(TICKETS[k]["price"]))
+            discord.SelectOption(
+                label=f"{TICKETS[k]['emoji']} {TICKETS[k]['name']}",
+                value=k,
+                # fmt_eur -> "12,34 <:BiffCoins:...>" ; on ne garde que "12,34" pour le descriptif
+                description=f"Prix: {fmt_eur(TICKETS[k]['price']).split(' ', 1)[0]}",
+                # Affiche le vrai emoji custom dans la colonne emoji du select
+                emoji=discord.PartialEmoji(name=MONEY_EMOJI_NAME, id=MONEY_EMOJI_ID),
+            )
             for k in TICKETS
         ],
         custom_id="tabac_select"
     )
     async def select_ticket(self, inter: Interaction, select: discord.ui.Select):
-        if not await self._guard(inter): return
+        if not await self._guard(inter):
+            return
         self.current_key = select.values[0]
-        # Édite le même message
-        await inter.response.edit_message(embed=self._base_embed(inter.client.storage), view=self)
+        await inter.response.edit_message(
+            embed=self._base_embed(inter.client.storage),
+            view=self
+        )
 
     @discord.ui.button(label="🎫 Gratter", style=discord.ButtonStyle.success, custom_id="tabac_gratter")
     async def btn_gratter(self, inter: Interaction, _: discord.ui.Button):
