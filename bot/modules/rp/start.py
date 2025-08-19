@@ -15,8 +15,10 @@ try:
 except Exception:
     from bot.modules.rp.economy import _check_limit as check_limit
 
-# Emoji BiffCoins
-from bot.modules.common.money import MONEY_EMOJI
+# Emoji & format monnaie
+from bot.modules.common.money import MONEY_EMOJI, fmt_eur
+
+START_MONEY_CENTS = 100  # 1 BiffCoin
 
 # ── Palette
 PALETTE = [
@@ -31,6 +33,7 @@ PALETTE = [
 WELCOME_INTRO = (
     "🌆 **Bienvenue dans LaRue.exe**\n"
     "{mention}, ici tout se compte en **BiffCoins {emoji}**. "
+    "Tu ramasses **{start}** par terre — cadeau de bienvenue.\n"
     "Commence léger, finis chargé."
 )
 
@@ -156,26 +159,24 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
             await inter.response.send_message("🛑 Tu as déjà lancé LaRue.exe.", ephemeral=True)
             return
 
-        storage.update_player(inter.user.id, has_started=True, money=0)
+        # Créditer au moins 1 BiffCoin au premier démarrage
+        initial = max(int(p.get("money", 0)) if p else 0, START_MONEY_CENTS)
+        storage.update_player(inter.user.id, has_started=True, money=initial)
 
         color = PALETTE[inter.user.id % len(PALETTE)]
         embed = Embed(title="🌆 LaRue.exe", color=color)
 
         embed.add_field(
             name="Introduction",
-            value=WELCOME_INTRO.format(mention=inter.user.mention, emoji=MONEY_EMOJI),
+            value=WELCOME_INTRO.format(
+                mention=inter.user.mention,
+                emoji=MONEY_EMOJI,
+                start=fmt_eur(START_MONEY_CENTS),
+            ),
             inline=False
         )
-        embed.add_field(
-            name="Actions",
-            value=WELCOME_RULES,
-            inline=False
-        )
-        embed.add_field(
-            name="Tips",
-            value=WELCOME_HINTS,
-            inline=False
-        )
+        embed.add_field(name="Actions", value=WELCOME_RULES, inline=False)
+        embed.add_field(name="Tips", value=WELCOME_HINTS, inline=False)
         embed.set_footer(text="Choisis une action pour commencer • LaRue.exe")
 
         view = StartView(inter.user.id)
