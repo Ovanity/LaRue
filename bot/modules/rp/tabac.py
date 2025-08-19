@@ -14,10 +14,10 @@ from bot.modules.common.money import fmt_eur
 # Tickets (prix/gains en CENTIMES)
 # ───────────────────────────────────────────────────────────────────
 TICKETS: dict[str, dict] = {
-    "BANCO": {
+    "banco": {
         "name": "BANCO",
         "price": 100,  # 1,00 €
-        "pool": [  # (gain_cents, poids) — EV ≈ 62.4c
+        "pool": [  # EV ≈ 0,624 €
             (0,   430),
             (20,  120),
             (50,  150),
@@ -29,10 +29,10 @@ TICKETS: dict[str, dict] = {
         "emoji": "🟨",
         "desc": "Le classique à 1€. Souvent BAN, parfois CO. La FDJ te dit merci.",
     },
-    "ASTRO": {
+    "astro": {
         "name": "ASTRO",
         "price": 200,  # 2,00 €
-        "pool": [  # EV ≈ 1,26 €
+        "pool": [  # EV ≈ 1,255 €
             (0,   520),
             (50,  100),
             (100, 120),
@@ -46,10 +46,10 @@ TICKETS: dict[str, dict] = {
         "emoji": "🪐",
         "desc": "Lis dans les étoiles… et retrouve surtout ton porte-monnaie vide.",
     },
-    "GOAL": {
+    "goal": {
         "name": "GOAL!",
         "price": 300,  # 3,00 €
-        "pool": [  # EV ≈ 2,09 €
+        "pool": [  # EV ≈ 2,090 €
             (0,    430),
             (100,  120),
             (150,  110),
@@ -63,10 +63,10 @@ TICKETS: dict[str, dict] = {
         "emoji": "⚽️",
         "desc": "Tu tires… à côté 9 fois sur 10. Beau geste technique quand même.",
     },
-    "CASH": {
+    "cash": {
         "name": "CASH",
         "price": 500,  # 5,00 €
-        "pool": [  # EV ≈ 3,41 €
+        "pool": [  # EV ≈ 3,415 €
             (0,    600),
             (200,  90),
             (300,  95),
@@ -79,10 +79,10 @@ TICKETS: dict[str, dict] = {
         "emoji": "💵",
         "desc": "Le nom fait rêver, la réalité fait rire (surtout la FDJ).",
     },
-    "MILLIONNAIRE": {
+    "million": {
         "name": "MILLIONNAIRE",
         "price": 1000,  # 10,00 €
-        "pool": [  # EV ≈ 6,60 €
+        "pool": [  # EV ≈ 6,600 €
             (0,     720),
             (500,   120),  # demi-remboursement
             (1000,  80),   # remboursement
