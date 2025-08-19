@@ -227,6 +227,15 @@ class TabacView(discord.ui.View):
             value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
             inline=False
         )
+        e.add_field(
+            name="Résultat",
+            value=(
+                f"{res_text}\n"
+                f"**Solde**: {fmt_eur(final_money)}\n"
+            ),
+            inline=False
+        )
+
         self._locked = False
         self._set_gratter_disabled(False)
         if self.message:
