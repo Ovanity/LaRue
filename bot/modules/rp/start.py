@@ -1,19 +1,12 @@
+# bot/modules/rp/start.py
 from __future__ import annotations
 import discord
 from discord import app_commands, Interaction, Embed
 
-# ——— Actions & constantes depuis economy (source de vérité)
+# ——— Flows & helpers depuis economy (source de vérité)
 from bot.modules.rp.economy import (
-    mendier_action, fouiller_action, poches_action,
-    MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP,
-    FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP,
+    play_mendier, play_fouiller, poches_action,
 )
-
-# Vérif des limites (alias public si dispo)
-try:
-    from bot.modules.rp.economy import check_limit
-except Exception:
-    from bot.modules.rp.economy import _check_limit as check_limit
 
 # Emoji & format monnaie
 from bot.modules.common.money import MONEY_EMOJI, fmt_eur
@@ -98,39 +91,19 @@ class StartView(discord.ui.View):
     async def btn_mendier(self, inter: Interaction, _: discord.ui.Button):
         if not await self._guard(inter):
             return
-        storage = inter.client.storage
-        p = storage.get_player(inter.user.id)
-        if not p.get("has_started"):
-            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
-            return
-
-        ok, msg = check_limit(storage, inter.user.id, "mendier", MENDIER_COOLDOWN_S, MENDIER_DAILY_CAP)
-        if not ok:
-            await inter.response.send_message(msg, ephemeral=True)
-            return
-
-        res = mendier_action(storage, inter.user.id)
-        await inter.response.send_message(res["msg"])
-        await self._expire_menu()
+        # Délègue toute la logique/UX à economy.play_mendier
+        success = await play_mendier(inter)
+        if success:
+            await self._expire_menu()
 
     @discord.ui.button(label="🗑️ Fouiller", style=discord.ButtonStyle.success, custom_id="start_fouiller")
     async def btn_fouiller(self, inter: Interaction, _: discord.ui.Button):
         if not await self._guard(inter):
             return
-        storage = inter.client.storage
-        p = storage.get_player(inter.user.id)
-        if not p.get("has_started"):
-            await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
-            return
-
-        ok, msg = check_limit(storage, inter.user.id, "fouiller", FOUILLER_COOLDOWN_S, FOUILLER_DAILY_CAP)
-        if not ok:
-            await inter.response.send_message(msg, ephemeral=True)
-            return
-
-        res = fouiller_action(storage, inter.user.id)
-        await inter.response.send_message(res["msg"])
-        await self._expire_menu()
+        # Délègue toute la logique/UX à economy.play_fouiller
+        success = await play_fouiller(inter)
+        if success:
+            await self._expire_menu()
 
     @discord.ui.button(label="💸 Poches", style=discord.ButtonStyle.secondary, custom_id="start_poches")
     async def btn_poches(self, inter: Interaction, _: discord.ui.Button):
@@ -141,7 +114,8 @@ class StartView(discord.ui.View):
         if not p or not p.get("has_started"):
             await inter.response.send_message("🛑 Lance /start d’abord.", ephemeral=True)
             return
-        embed = poches_action(storage, inter.user.id)  # Embed direct
+        # poches_action construit directement l'embed
+        embed = poches_action(storage, inter.user.id)
         await inter.response.send_message(embed=embed, ephemeral=False)
         await self._expire_menu()
 
