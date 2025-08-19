@@ -131,7 +131,6 @@ class TabacView(discord.ui.View):
         return True
 
     def _base_embed(self, storage) -> discord.Embed:
-        # Aucun ticket configuré
         if not TICKETS:
             return discord.Embed(
                 title="🏪 Tabac du quartier",
@@ -139,22 +138,23 @@ class TabacView(discord.ui.View):
                 color=discord.Color.dark_grey()
             )
 
-        # Fallback si la clé actuelle n’existe pas (ex: hot reload des tickets)
         if self.current_key not in TICKETS:
             self.current_key = next(iter(TICKETS))
 
-        t = TICKETS[self.current_key]  # type: ignore[index]
+        t = TICKETS[self.current_key]
+        solde = fmt_eur(_get_money(storage, self.owner_id))
+
         e = discord.Embed(
-            title="🏪 Tabac du quartier",
-            description=(
-                f"Ticket **{t['name']}** {t['emoji']}\n"
-                f"Prix: **{fmt_eur(t['price'])}**  •  "
-                f"Ton solde: **{fmt_eur(_get_money(storage, self.owner_id))}**\n"
-                f"*{t['desc']}*"
-            ),
+            title=f"{t['emoji']}  {t['name']}",
+            description=f"_{t['desc']}_",
             color=discord.Color.green()
         )
-        e.set_footer(text="Appuie sur 🎫 Gratter. Rejoue tant que t’as de la monnaie.")
+        # Ligne infos (alignées)
+        e.add_field(name="🎫 Prix", value=fmt_eur(t["price"]), inline=True)
+        e.add_field(name="💰 Solde", value=solde, inline=True)
+        e.add_field(name="\u200b", value="\u200b", inline=False)  # séparateur visuel
+
+        e.set_footer(text="Appuie sur 🎫 Gratter — rejoue tant que t’as des BiffCoins.")
         return e
 
     async def refresh_embed(self, storage) -> None:
@@ -170,11 +170,9 @@ class TabacView(discord.ui.View):
         placeholder="Choisis ton ticket…",
         options=[
             discord.SelectOption(
-                label=f"{TICKETS[k]['emoji']} {TICKETS[k]['name']}",
+                label=f"{TICKETS[k]['name']}",
                 value=k,
-                # fmt_eur -> "12,34 <:BiffCoins:...>" ; on ne garde que "12,34" pour le descriptif
-                description=f"Prix: {fmt_eur(TICKETS[k]['price']).split(' ', 1)[0]}",
-                # Affiche le vrai emoji custom dans la colonne emoji du select
+                description=f"Prix : {fmt_eur(TICKETS[k]['price']).split(' ', 1)[0]}",
                 emoji=discord.PartialEmoji(name=MONEY_EMOJI_NAME, id=MONEY_EMOJI_ID),
             )
             for k in TICKETS
@@ -185,10 +183,7 @@ class TabacView(discord.ui.View):
         if not await self._guard(inter):
             return
         self.current_key = select.values[0]
-        await inter.response.edit_message(
-            embed=self._base_embed(inter.client.storage),
-            view=self
-        )
+        await inter.response.edit_message(embed=self._base_embed(inter.client.storage), view=self)
 
     @discord.ui.button(label="🎫 Gratter", style=discord.ButtonStyle.success, custom_id="tabac_gratter")
     async def btn_gratter(self, inter: Interaction, _: discord.ui.Button):
@@ -233,7 +228,7 @@ class TabacView(discord.ui.View):
         symbols_pool = ["🍀", "⭐", "💎", "7️⃣", "🧧"]
         gain_cents = _weight_pick(t["pool"])
 
-        # grille solution
+        # Grille solution (ligne gagnante si gain > 0)
         if gain_cents > 0:
             sym = random.choice(symbols_pool)
             win_line = random.randrange(3)
@@ -244,8 +239,8 @@ class TabacView(discord.ui.View):
 
         # 1) état couvert
         e = self._base_embed(storage)
-        covered = "\n".join([" ".join([cover, cover, cover]) for _ in range(3)])
-        e.add_field(name="Carte", value=f"```\n{covered}\n```", inline=False)
+        covered = "\n".join(" ".join([cover] * 3) for _ in range(3))
+        e.add_field(name="🧩 Carte", value=f"```\n{covered}\n```", inline=False)
         if self.message:
             await self.message.edit(embed=e, view=self)
 
@@ -259,35 +254,46 @@ class TabacView(discord.ui.View):
                     line.append(rows[r][c] if c <= step else cover)
                 reveal_lines.append(" ".join(line))
             e = self._base_embed(storage)
-            e.add_field(name="Carte", value=f"```\n" + "\n".join(reveal_lines) + "\n```", inline=False)
+            e.add_field(name="🧩 Carte", value="```\n" + "\n".join(reveal_lines) + "\n```", inline=False)
             if self.message:
                 await self.message.edit(embed=e, view=self)
 
-        # 3) crédit + résultat
+        # 3) crédit + résultat (+ stat)
         if hasattr(storage, "increment_stat"):
             storage.increment_stat(inter.user.id, "tabac_count", 1)
 
         final_money = _add_money(storage, inter.user.id, gain_cents)
 
-        res_text = (
-            f"🎉 **Gagné {fmt_eur(gain_cents)} !**"
-            if gain_cents > 0 else
-            "😬 Rien du tout… la chance reviendra."
-        )
+        # Mise / Net / code couleur
+        mise = int(t["price"])
+        net = gain_cents - mise
+        if net > 0:
+            badge = "✅"
+            color = discord.Color.green()
+        elif net == 0:
+            badge = "🟨"
+            color = discord.Color.gold()
+        else:
+            badge = "❌"
+            color = discord.Color.red()
+
         e = self._base_embed(storage)
+        e.color = color
         e.add_field(
-            name="Carte",
+            name="🧩 Carte",
             value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
             inline=False
         )
         e.add_field(
-            name="Résultat",
+            name="🧾 Reçu",
             value=(
-                f"{res_text}\n"
-                f"**Solde**: {fmt_eur(final_money)}\n"
+                f"• Mise : **{fmt_eur(mise)}**\n"
+                f"• Gain : **{fmt_eur(gain_cents)}**\n"
+                f"• Net  : **{('+' if net > 0 else '')}{fmt_eur(net)}** {badge}"
             ),
             inline=False
         )
+        e.add_field(name="\u200b", value=f"**Solde** actuel : {fmt_eur(final_money)}", inline=False)
 
         self._locked = False
         self._set_gratter_disabled(False)
@@ -301,7 +307,7 @@ class TabacView(discord.ui.View):
         if self.message:
             try:
                 e = discord.Embed(
-                    description="⏳ Le kiosque a fermé. Rouvre **/tabac** pour rejouer.",
+                    description="⏳ Le Tabac a fermé.",
                     color=discord.Color.dark_grey()
                 )
                 await self.message.edit(embed=e, view=None)
