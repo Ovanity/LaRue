@@ -63,23 +63,24 @@ def _embed_profile(inter: Interaction, storage, target: discord.User | discord.M
 
     e = discord.Embed(
         title=f"🪪 {name}",
-        description=bio,
         color=color
     )
 
-    # Avatar en haut à droite (thumbnail)
+    # Avatar en haut-droite (thumbnail)
     url = _avatar_url(target, size=256)
     if url:
         e.set_thumbnail(url=url)
 
-    # Infos principales
+    # Ligne stats (compacte, pas de séparateur pleine largeur)
     e.add_field(name="💰 Capital", value=money, inline=True)
     e.add_field(name="🧿 Street Cred", value=cred, inline=True)
-    e.add_field(name="\u200b", value="\u200b", inline=False)  # séparateur
 
     # (optionnel) titre perso
     if custom_title:
         e.add_field(name="🏷️ Titre", value=str(custom_title), inline=False)
+
+    # Section BIO clairement délimitée
+    e.add_field(name="📝 Bio", value=bio, inline=False)
 
     # Footer discret (ID masqué)
     tag = getattr(target, "name", "user")
