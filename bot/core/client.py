@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # ── Discord client
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
+intents.members = True
 tree = app_commands.CommandTree(client)
 
 # Exposer les services utiles aux handlers
