@@ -228,24 +228,43 @@ class TabacView(discord.ui.View):
         symbols_pool = ["🍀", "⭐", "💎", "7️⃣", "🧧"]
         gain_cents = _weight_pick(t["pool"])
 
-        def _rand_row_no_triple(symbols: list[str]) -> list[str]:
-            a = random.choice(symbols)
-            b = random.choice(symbols)
-            c = random.choice(symbols)
-            # Évite une ligne du type X X X pour les tickets perdants
-            while a == b == c:
-                b = random.choice(symbols)
-                c = random.choice(symbols)
-            return [a, b, c]
+        def _latin_grid(sym_pool: list[str]) -> list[list[str]]:
+            """Grille perdante : aucune ligne/colonne n'a 3 mêmes symboles."""
+            if len(sym_pool) < 3:
+                a = sym_pool[0]
+                return [[a, cover, a], [cover, a, cover], [a, cover, a]]
+            a, b, c = random.sample(sym_pool, 3)
+            base = [[a, b, c], [b, c, a], [c, a, b]]
+            random.shuffle(base)  # mélange les lignes
+            cols = list(zip(*base))
+            random.shuffle(cols)  # mélange les colonnes
+            return [list(r) for r in zip(*cols)]
+
+        def _two_rows_no_triple(sym_pool: list[str], ban: str) -> list[list[str]]:
+            """Deux lignes sans triplé, et qui évitent les colonnes 3×ban."""
+            others = [s for s in sym_pool if s != ban] or [ban]
+            if len(others) == 1:
+                o = others[0]
+                return [[o, ban, o], [ban, o, ban]]
+            a, b = random.sample(others, 2)
+            rows = [[a, b, a], [b, a, b]]  # pas de triplé dans ces lignes
+            random.shuffle(rows)
+            return rows
 
         # Grille solution
         if gain_cents > 0:
-            sym = random.choice(symbols_pool)
-            win_line = random.randrange(3)  # 0..2
-            rows = [[random.choice(symbols_pool) for _ in range(3)] for __ in range(3)]
-            rows[win_line] = [sym, sym, sym]  # ligne gagnante visible
+            win_sym = random.choice(symbols_pool)
+            win_row = [win_sym, win_sym, win_sym]
+            other_rows = _two_rows_no_triple(symbols_pool, win_sym)
+
+            rows = [None, None, None]  # type: ignore[list-item]
+            win_idx = random.randrange(3)
+            rows[win_idx] = win_row
+            idxs = [i for i in range(3) if i != win_idx]
+            rows[idxs[0]] = other_rows[0]
+            rows[idxs[1]] = other_rows[1]
         else:
-            rows = [_rand_row_no_triple(symbols_pool) for _ in range(3)]  # aucune ligne 3-à-la-suite
+            rows = _latin_grid(symbols_pool)
 
         # 1) état couvert
         e = self._base_embed(storage)
@@ -259,10 +278,7 @@ class TabacView(discord.ui.View):
             await asyncio.sleep(0.8)
             reveal_lines = []
             for r in range(3):
-                line = []
-                for c in range(3):
-                    line.append(rows[r][c] if c <= step else cover)
-                reveal_lines.append(" ".join(line))
+                reveal_lines.append(" ".join(rows[r][c] if c <= step else cover for c in range(3)))
             e = self._base_embed(storage)
             e.add_field(name="🧩 Carte", value="```\n" + "\n".join(reveal_lines) + "\n```", inline=False)
             if self.message:
@@ -273,11 +289,10 @@ class TabacView(discord.ui.View):
             storage.increment_stat(inter.user.id, "tabac_count", 1)
 
         final_money = _add_money(storage, inter.user.id, gain_cents)
-
         mise = int(t["price"])
         net = gain_cents - mise
 
-        # Texte + couleur + badge explicites
+        # Badge & couleur
         if net > 0:
             badge_txt = "🟢 Profit"
             color = discord.Color.green()
@@ -288,7 +303,7 @@ class TabacView(discord.ui.View):
             badge_txt = "🔴 Perdu"
             color = discord.Color.red()
 
-        # fmt_eur gère déjà le signe ; on préfixe uniquement le cas positif
+        # fmt_eur gère déjà le signe ; on n'ajoute + que pour un net positif
         net_str = fmt_eur(net) if net <= 0 else f"+{fmt_eur(net)}"
 
         e = self._base_embed(storage)
@@ -303,7 +318,8 @@ class TabacView(discord.ui.View):
             value=(
                 f"• Mise : **{fmt_eur(mise)}**\n"
                 f"• Gain : **{fmt_eur(gain_cents)}**\n"
-                f"• Net  : **{net_str}** — {badge_txt}"
+                f"• Net  : **{net_str}**\n"
+                f"• Issue : {badge_txt}"
             ),
             inline=False
         )
