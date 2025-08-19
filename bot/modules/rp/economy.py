@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import random, time
 from datetime import datetime, UTC, timedelta
 import discord
@@ -81,7 +82,6 @@ def _daily_cap_message(action: str) -> str:
     return base.format(reset_rel=f"<t:{reset_at}:R>", reset_time=f"<t:{reset_at}:T>")
 
 def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[bool, str | None]:
-
     """Retourne (ok, message_si_refus). Si storage n'a pas la méthode -> toujours OK."""
     if not hasattr(storage, "check_and_touch_action"):
         return True, None
@@ -92,6 +92,90 @@ def _check_limit(storage, user_id: int, action: str, cd: int, cap: int) -> tuple
         return False, _daily_cap_message(action)
     return False, _cooldown_message(storage, user_id, action, wait, remaining, cd)
 
+# --- UI helpers (embeds & mini-anim) ---
+def _now_ts() -> int:
+    return int(time.time())
+
+def _cooldown_field(storage, user_id: int, action: str, cd: int, cap: int) -> tuple[str, str]:
+    """
+    Retourne (titre, valeur) pour un champ 'Cooldown' homogène avec barre de progression.
+    """
+    last_ts = 0
+    remaining = None
+    if hasattr(storage, "get_action_state"):
+        st = storage.get_action_state(user_id, action)
+        last_ts = int(st.get("last_ts", 0) or 0)
+        remaining = st.get("remaining", None)
+
+    now = _now_ts()
+    elapsed = max(0, now - last_ts)
+    bar, pct = _progress_bar(elapsed, max(cd, 1))
+
+    if elapsed < cd and last_ts > 0:
+        available_at = last_ts + cd
+        suffix = f"(reste **{remaining}**)" if isinstance(remaining, int) and remaining >= 0 else ""
+        val = f"⏳ Prêt {f'<t:{available_at}:R>'} • <t:{available_at}:T> {suffix}\n`{bar}` {pct}%"
+    else:
+        suffix = f"(reste **{remaining}**)" if isinstance(remaining, int) and remaining >= 0 else ""
+        val = f"✅ Disponible {suffix}\n`{bar}` 100%"
+    return ("⏱️ Cooldown", val)
+
+def _result_embed(
+    *,
+    title: str,
+    icon: str,
+    flavor: str,
+    delta_cents: int,
+    total_cents: int,
+    color: discord.Color,
+    storage,
+    user_id: int,
+    action_key: str,
+    cooldown_s: int,
+    cap: int,
+) -> discord.Embed:
+    gain = fmt_eur(delta_cents)
+    total = fmt_eur(total_cents)
+
+    e = discord.Embed(
+        title=f"{icon}  {title}",
+        description=flavor,
+        color=color
+    )
+    e.add_field(name="💸 Gain", value=f"**{('+' if delta_cents>0 else '')}{gain}**", inline=True)
+    e.add_field(name="💼 Capital", value=f"**{total}**", inline=True)
+
+    name, val = _cooldown_field(storage, user_id, action_key, cooldown_s, cap)
+    e.add_field(name=name, value=val, inline=False)
+    e.set_footer(text="LaRue.exe • Reste poli, ça paye parfois.")
+    return e
+
+async def _play_anim_then_finalize(
+    inter: Interaction,
+    *,
+    title: str,
+    pre_lines: list[str],
+    color: discord.Color,
+    final_embed: discord.Embed,
+    delay: float = 0.6
+):
+    """
+    Envoie un embed 'en cours…' puis le met à jour 1-2 fois avant le résultat.
+    """
+    # 1) premier écran
+    anim = discord.Embed(title=title, description=pre_lines[0], color=color)
+    await inter.response.send_message(embed=anim)
+    msg = await inter.original_response()
+
+    # 2) steps optionnels
+    for line in pre_lines[1:]:
+        await asyncio.sleep(delay)
+        anim.description = line
+        await msg.edit(embed=anim)
+
+    # 3) résultat
+    await asyncio.sleep(delay)
+    await msg.edit(embed=final_embed)
 
 # ───────── Actions réutilisables (centimes) ─────────
 def mendier_action(storage, user_id: int) -> dict:
@@ -160,7 +244,6 @@ def fouiller_action(storage, user_id: int) -> dict:
 
 def poches_action(storage, user_id: int) -> discord.Embed:
     money_cents = storage.get_money(user_id)
-
     embed = discord.Embed(
         description=f"En fouillant un peu, t’arrives à racler : **{fmt_eur(money_cents)}**",
         color=discord.Color.dark_gold()
@@ -189,8 +272,36 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
             await inter.response.send_message(msg, ephemeral=True)
             return
 
+        # Calcul du résultat (crédit immédiat)
         res = mendier_action(storage, inter.user.id)
-        await inter.response.send_message(res["msg"])
+
+        flavor_lines = [
+            "🤲 Tu te poses au feu rouge…",
+            "👀 Un passant fouille sa poche…",
+            "💸 Une pièce glisse dans ta main.",
+        ]
+        final_embed = _result_embed(
+            title="Mendier",
+            icon="🥖",
+            flavor="« Merci chef… la rue te sourit un peu aujourd’hui. »",
+            delta_cents=res["delta"],
+            total_cents=res["money"],
+            color=discord.Color.blurple(),
+            storage=storage,
+            user_id=inter.user.id,
+            action_key="mendier",
+            cooldown_s=MENDIER_COOLDOWN_S,
+            cap=MENDIER_DAILY_CAP,
+        )
+
+        await _play_anim_then_finalize(
+            inter,
+            title="🥖 Mendier",
+            pre_lines=flavor_lines,
+            color=discord.Color.blurple(),
+            final_embed=final_embed,
+            delay=0.6
+        )
 
     @hess.command(name="fouiller", description="Fouille une poubelle (boost léger via inventaire)")
     async def fouiller(inter: Interaction):
@@ -205,7 +316,45 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
             return
 
         res = fouiller_action(storage, inter.user.id)
-        await inter.response.send_message(res["msg"])
+
+        # Saveur selon issue
+        if res["delta"] > 0:
+            flavor = "🧳 Entre canettes et cartons… un truc revendable !"
+            color = discord.Color.green()
+        elif res["delta"] == 0:
+            flavor = "🗑️ Bruit, odeur, rats… et rien au fond."
+            color = discord.Color.gold()
+        else:
+            flavor = "🙄 Mauvaise rencontre. Le trottoir t’a coûté des sous."
+            color = discord.Color.red()
+
+        anim_lines = [
+            "♻️ Tu soulèves le couvercle…",
+            "🔦 Tu éclaires tout au fond…",
+            "🫳 Tu tires quelque chose…",
+        ]
+        final_embed = _result_embed(
+            title="Fouiller",
+            icon="🗑️",
+            flavor=flavor,
+            delta_cents=res["delta"],
+            total_cents=res["money"],
+            color=color,
+            storage=storage,
+            user_id=inter.user.id,
+            action_key="fouiller",
+            cooldown_s=FOUILLER_COOLDOWN_S,
+            cap=FOUILLER_DAILY_CAP,
+        )
+
+        await _play_anim_then_finalize(
+            inter,
+            title="🗑️ Fouiller",
+            pre_lines=anim_lines,
+            color=color,
+            final_embed=final_embed,
+            delay=0.6
+        )
 
     @hess.command(name="classement", description="Top 10 des joueurs les plus chargés")
     async def classement(inter: Interaction):
