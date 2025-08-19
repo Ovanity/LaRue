@@ -29,7 +29,7 @@ TICKETS: dict[str, dict] = {
             (0, 430), (20, 120), (50, 150), (100, 190),
             (200, 80), (500, 25), (1000, 5),
         ],  # EV ≈ 0,62 € → 62%
-        "emoji": "🟨",
+        "emoji": "🎟️",
         "desc": "Le classique à 1 €. Souvent BAN, parfois CO. La FDJ te dit merci.",
     },
     "astro": {
