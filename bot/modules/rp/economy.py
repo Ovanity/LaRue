@@ -123,6 +123,7 @@ def _result_embed(
     action_key: str,
     cooldown_s: int,
     cap: int,
+    show_cooldown: bool = False,   # <- NEW: par défaut on n'affiche pas
 ) -> discord.Embed:
     gain = fmt_eur(delta_cents)
     total = fmt_eur(total_cents)
@@ -132,9 +133,13 @@ def _result_embed(
         color=color
     )
     e.add_field(name="💸 Gain", value=f"**{('+' if delta_cents>0 else '')}{gain}**", inline=True)
-    e.add_field(name="💼 Capital", value=f"**{total}**", inline=True)
-    name, val = _cooldown_field(storage, user_id, action_key, cooldown_s, cap)
-    e.add_field(name=name, value=val, inline=False)
+    e.add_field(name="💰 Capital", value=f"**{total}**", inline=True)
+
+    # Affichage du cooldown optionnel
+    if show_cooldown:
+        name, val = _cooldown_field(storage, user_id, action_key, cooldown_s, cap)
+        e.add_field(name=name, value=val, inline=False)
+
     e.set_footer(text="LaRue.exe • Reste poli, ça paye parfois.")
     return e
 
@@ -229,6 +234,7 @@ async def play_mendier(inter: Interaction, *, storage=None) -> bool:
         action_key="mendier",
         cooldown_s=MENDIER_COOLDOWN_S,
         cap=MENDIER_DAILY_CAP,
+        show_cooldown=False,
     )
     await _play_anim_then_finalize(
         inter,
@@ -273,6 +279,7 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
         action_key="fouiller",
         cooldown_s=FOUILLER_COOLDOWN_S,
         cap=FOUILLER_DAILY_CAP,
+        show_cooldown=False,
     )
     await _play_anim_then_finalize(
         inter,
