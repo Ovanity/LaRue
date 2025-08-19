@@ -322,7 +322,7 @@ class TabacView(discord.ui.View):
 
         if gain_cents > 0:
             # Win = message court & euphorisant
-            e.color = discord.Color.green()
+            e.color = discord.Color.gold()
             e.add_field(
                 name="✨ Gagné",
                 value=f"Tu prends **+{fmt_eur(gain_cents)}**. Pas mal, chef.",
