@@ -21,7 +21,8 @@ def _display_name(inter: Interaction, user: discord.abc.User) -> str:
             return m.display_name
     return getattr(user, "global_name", None) or user.name
 
-def _avatar_url(u: discord.abc.User | discord.Member, size: int = 512) -> str:
+def _avatar_url(u: discord.abc.User | discord.Member, size: int = 256) -> str:
+    # Thumbnail (plus discret qu'une grande image)
     try:
         return u.display_avatar.with_size(size).url
     except Exception:
@@ -41,6 +42,10 @@ async def _get_member(inter: Interaction, user: discord.abc.User) -> Optional[di
         return await inter.guild.fetch_member(user.id)
     except (discord.NotFound, discord.HTTPException):
         return None
+
+def _mask_id(user_id: int) -> str:
+    s = str(user_id)
+    return f"…{s[-4:]}" if len(s) >= 4 else "…"
 
 # ─────────────────────────────
 # Embed
@@ -62,22 +67,23 @@ def _embed_profile(inter: Interaction, storage, target: discord.User | discord.M
         color=color
     )
 
-    # Avatar en GRAND en haut
-    url = _avatar_url(target, size=512)
+    # Avatar en haut à droite (thumbnail)
+    url = _avatar_url(target, size=256)
     if url:
-        e.set_image(url=url)
+        e.set_thumbnail(url=url)
 
     # Infos principales
     e.add_field(name="💰 Biftons", value=money, inline=True)
     e.add_field(name="🧿 Street Cred", value=cred, inline=True)
+    e.add_field(name="\u200b", value="\u200b", inline=False)  # séparateur
 
     # (optionnel) titre perso
     if custom_title:
         e.add_field(name="🏷️ Titre", value=str(custom_title), inline=False)
 
-    # Footer discret
-    tag = f"{getattr(target, 'name', 'user')}#{getattr(target, 'discriminator', '0')}"
-    e.set_footer(text=f"Profil • {tag} • ID {target.id}")
+    # Footer discret (ID masqué)
+    tag = getattr(target, "name", "user")
+    e.set_footer(text=f"Profil • {tag} • UID {_mask_id(target.id)}")
     return e
 
 # ─────────────────────────────
@@ -102,9 +108,8 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             await inter.response.send_message("🤖 Les bots n’ont pas de profil ici.", ephemeral=True)
             return
 
-        # Résolution membre (fallback API)
+        # Résolution membre (cache + fetch si besoin)
         if user is None:
-            # toi-même : tolérant même si cache vide
             member = inter.user if isinstance(inter.user, discord.Member) else (await _get_member(inter, inter.user))
         else:
             member = await _get_member(inter, user)
