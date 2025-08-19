@@ -13,56 +13,57 @@ from bot.modules.common.money import fmt_eur
 # ───────────────────────────────────────────────────────────────────
 # Tickets (prix/gains en CENTIMES)
 # ───────────────────────────────────────────────────────────────────
+# Tickets (prix/gains en CENTIMES) — payout moyen ≈ 63–68%
 TICKETS: dict[str, dict] = {
-    "micro": {
-        "name": "Micro-Gratte",
-        "price": 50,   # 0,50 €
-        "pool": [      # (gain_cents, poids)
-            (0, 320), (5, 90), (10, 80), (20, 120),
-            (50, 220), (100, 120), (200, 20), (500, 5),
-        ],  # EV ≈ 34c → 68%
-        "emoji": "🟩",
-        "desc": "Le gratte-vite pas cher. Souvent rien, parfois le ticket remboursé.",
-    },
-    "canette": {
-        "name": "Gratte-Canette",
+    "banco": {
+        "name": "BANCO",
         "price": 100,  # 1,00 €
-        "pool": [
-            (0, 380), (10, 60), (20, 90), (50, 150),
-            (100, 200), (200, 90), (500, 25), (1000, 5),
-        ],  # EV ≈ 65c → 65%
+        "pool": [      # (gain_cents, poids)
+            (0,   430), (20, 120), (50, 150), (100, 190),
+            (200,  80), (500,  25), (1000,  5),
+        ],  # EV ≈ 0,62 € → 62%
         "emoji": "🟨",
-        "desc": "Le classique du kiosque. Remboursé assez souvent, bonus occasionnels.",
+        "desc": "Le classique à 1 €. Souvent BAN, parfois CO. La FDJ te dit merci.",
     },
-    "poche": {
-        "name": "Jackpot de Poche",
+    "astro": {
+        "name": "ASTRO",
         "price": 200,  # 2,00 €
         "pool": [
-            (0, 560), (50, 60), (100, 90), (150, 80),
-            (200, 110), (400, 60), (1000, 30), (2000, 8), (5000, 2),
+            (0,   520), (50, 100), (100, 120), (200, 120),
+            (300,  70), (500,  45), (1000, 15), (2000, 8), (5000, 2),
         ],  # EV ≈ 1,26 € → 63%
-        "emoji": "🟦",
-        "desc": "Petit frisson à 2 €. Parfois plus qu’un remboursement.",
+        "emoji": "🪐",
+        "desc": "Lis dans les étoiles… et retrouve surtout ton porte-monnaie vide.",
     },
-    "pave": {
-        "name": "Pavé Doré",
+    "goal": {
+        "name": "GOAL!",
         "price": 300,  # 3,00 €
         "pool": [
-            (0, 400), (100, 60), (150, 50), (200, 110),
-            (300, 180), (500, 60), (1000, 30), (2000, 8), (5000, 2),
-        ],  # EV ≈ 1,95 € → 65%
-        "emoji": "🟥",
-        "desc": "Un peu plus piquant. De vraies lignes gagnantes peuvent tomber.",
+            (0,    394), (100, 120), (150, 110), (200, 100),
+            (300,  160), (500,  70), (1000, 30), (2000, 12), (5000, 4),
+        ],  # EV ≈ 2,06 € → 69%
+        "emoji": "⚽️",
+        "desc": "Tu tires… à côté 9 fois sur 10. Beau geste technique quand même.",
     },
-    "trottoir": {
-        "name": "Loto Trottoir",
+    "cash": {
+        "name": "CASH",
         "price": 500,  # 5,00 €
         "pool": [
-            (0, 800), (200, 140), (300, 130), (500, 130),
-            (1000, 120), (2000, 60), (5000, 8), (10000, 2), (20000, 1),
-        ],  # EV ≈ 3,25 € → 65%
-        "emoji": "🟪",
-        "desc": "Le gros ticket. Grosse variance, jackpot rarissime mais réel.",
+            (0,    600), (200,  90), (300,  95), (500,  90),
+            (1000,  70), (2000, 40), (5000, 10), (10000, 5),
+        ],  # EV ≈ 3,42 € → 68%
+        "emoji": "💵",
+        "desc": "Le nom fait rêver, la réalité fait rire (surtout la FDJ).",
+    },
+    "million": {
+        "name": "MILLIONNAIRE",
+        "price": 1000,  # 10,00 €
+        "pool": [
+            (0,     720), (500, 120), (1000, 80), (2000, 40),
+            (5000,   20), (10000, 12), (20000, 6), (50000, 2),
+        ],  # EV ≈ 6,60 € → 66%
+        "emoji": "💰",
+        "desc": "Tu ne deviendras pas millionnaire, mais eux oui si tu continues.",
     },
 }
 
