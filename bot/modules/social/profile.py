@@ -73,7 +73,7 @@ def _embed_profile(inter: Interaction, storage, target: discord.User | discord.M
         e.set_thumbnail(url=url)
 
     # Infos principales
-    e.add_field(name="💰 Biftons", value=money, inline=True)
+    e.add_field(name="💰 Capital", value=money, inline=True)
     e.add_field(name="🧿 Street Cred", value=cred, inline=True)
     e.add_field(name="\u200b", value="\u200b", inline=False)  # séparateur
 
