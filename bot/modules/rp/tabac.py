@@ -334,7 +334,7 @@ class TabacView(discord.ui.View):
             tease = "C’était pas loin…" if near_miss else "Rien cette fois."
             e.add_field(
                 name="😶",
-                value=tease + " gratte en un autre pour faire mieux.",
+                value=tease + " Gratte en un autre pour faire mieux.",
                 inline=False
             )
 
