@@ -68,6 +68,7 @@ TICKETS: dict[str, dict] = {
 }
 
 TABAC_COOLDOWN_S = 5  # anti-spam léger
+DEFAULT_TICKET_KEY = next(iter(TICKETS))
 
 # ── Helpers storage-safe ───────────────────────────────────────────
 def _get_money(storage, user_id: int) -> int:
@@ -112,7 +113,8 @@ class TabacView(discord.ui.View):
         super().__init__(timeout=120)
         self.owner_id = owner_id
         self.message: Optional[discord.Message] = None
-        self.current_key: str = "micro"
+        # clé par défaut = première entrée disponible dans TICKETS
+        self.current_key: Optional[str] = next(iter(TICKETS)) if TICKETS else None
         self._locked: bool = False
 
     async def _guard(self, inter: Interaction) -> bool:
@@ -122,12 +124,25 @@ class TabacView(discord.ui.View):
         return True
 
     def _base_embed(self, storage) -> discord.Embed:
-        t = TICKETS[self.current_key]
+        # Aucun ticket configuré
+        if not TICKETS:
+            return discord.Embed(
+                title="🏪 Tabac du quartier",
+                description="Aucun ticket disponible pour le moment.",
+                color=discord.Color.dark_grey()
+            )
+
+        # Fallback si la clé actuelle n’existe pas (ex: hot reload des tickets)
+        if self.current_key not in TICKETS:
+            self.current_key = next(iter(TICKETS))
+
+        t = TICKETS[self.current_key]  # type: ignore[index]
         e = discord.Embed(
             title="🏪 Tabac du quartier",
             description=(
                 f"Ticket **{t['name']}** {t['emoji']}\n"
-                f"Prix: **{fmt_eur(t['price'])}**  •  Ton solde: **{fmt_eur(_get_money(storage, self.owner_id))}**\n"
+                f"Prix: **{fmt_eur(t['price'])}**  •  "
+                f"Ton solde: **{fmt_eur(_get_money(storage, self.owner_id))}**\n"
                 f"*{t['desc']}*"
             ),
             color=discord.Color.green()
