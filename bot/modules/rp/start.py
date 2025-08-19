@@ -28,19 +28,25 @@ PALETTE = [
 ]
 
 WELCOME_INTRO = (
-    "🖥️ **Mode Survie Activé**\n"
-    "Wesh {mention}, t’es arrivé ici **sans thunes**, sans matos, et avec un vieux carton.\n"
-    "T’es direct dans **la sauce**."
+    "🌆 **Bienvenue dans LaRue.exe**\n"
+    "{mention}, te voilà lâché avec trois riens et une grande faim. "
+    "Ici, tout se compte en **BiffCoins**. Commence léger, finis chargé."
 )
+
 WELCOME_RULES = (
-    "📜 **Règles du terrain**\n"
-    "💰 Tu veux graille ? → *Tu mendies*\n"
-    "🗑️ Tu veux du matos ? → *Tu fouilles*\n"
-    "🏃 Tu veux survivre ? → *Tu bouges vite*"
+    "📜 **Comment ça marche**\n"
+    "🥖 *Mendier* : petits gains réguliers (1/h)\n"
+    "🗑️ *Fouiller* : un vrai coup par jour (1/j)\n"
+    "🎟️ *Tabac* : tickets à gratter, frisson garanti\n"
+    "🛒 *Shop* : achète des boosts utiles\n"
+    "🪪 *Profil* : bio & Street Cred (don de respect)\n"
+    "💸 *Poches* : ton capital en un clin d’œil"
 )
+
 WELCOME_HINTS = (
-    "▶️ Utilise les **boutons** ci‑dessous pour agir tout de suite\n"
-    "ou tape : `/hesshelp` • pour avoir plus d'informations.\n"
+    "▶️ Utilise les **boutons** ci-dessous pour commencer.\n"
+    "💡 Enchaîne les actions, investis au shop, puis tente ta chance au tabac.\n"
+    "Besoin d'aide ? Tape `/hesshelp`."
 )
 
 
@@ -56,7 +62,7 @@ class StartView(discord.ui.View):
     async def _guard(self, inter: Interaction) -> bool:
         if inter.user.id != self.owner_id:
             await inter.response.send_message(
-                "🛑 Ce menu n'est pas à toi mon reuf, tu joues à quoi ?",
+                "🛑 Ce menu n'est pas à toi, tu joues à quoi ?",
                 ephemeral=True
             )
             return False
@@ -68,7 +74,7 @@ class StartView(discord.ui.View):
             return
         try:
             expired_embed = discord.Embed(
-                description="⏳ Ce menu est expiré, il fallait se bouger mon reuf.",
+                description="⏳ Ce menu est expiré.",
                 color=discord.Color.dark_grey()
             )
             await self.message.edit(embed=expired_embed, view=None)
