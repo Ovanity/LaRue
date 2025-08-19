@@ -182,24 +182,41 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             return
 
         storage = inter.client.storage
-        rows = storage.top_profiles_by_cred(30)  # on tire large puis on filtre
-        filtered = []
+        # on prend un peu plus large puis on filtre (ordre supposé déjà trié côté storage)
+        rows = storage.top_profiles_by_cred(50)
+
+        filtered: list[tuple[int, int]] = []
         for uid, cred in rows:
-            m = inter.guild.get_member(int(uid))
-            if not m:
-                # pas de fetch ici pour éviter de spam l'API; on reste “server-only”
+            try:
+                uid_i = int(uid)
+                cred_i = int(cred)
+            except Exception:
                 continue
-            p = storage.get_player(int(uid))
-            if p and p.get("has_started"):
-                filtered.append((uid, cred))
+
+            # 1) cache
+            member = inter.guild.get_member(uid_i)
+            # 2) fallback API si pas en cache
+            if member is None:
+                try:
+                    member = await inter.guild.fetch_member(uid_i)
+                except (discord.NotFound, discord.HTTPException, discord.Forbidden):
+                    continue
+
+            # 3) doit avoir /start
+            p = storage.get_player(uid_i)
+            if not (p and p.get("has_started")):
+                continue
+
+            filtered.append((uid_i, cred_i))
             if len(filtered) >= 10:
                 break
 
         if not filtered:
-            await inter.response.send_message("Personne n’a encore de créd 😶")
+            await inter.response.send_message("Personne n’a encore de créd 😶", ephemeral=True)
             return
 
-        lines = [f"**{i+1}.** <@{int(uid)}> — **{cred}**" for i, (uid, cred) in enumerate(filtered)]
+        lines = [f"**{i + 1}.** <@{uid}> — **{cred}**"
+                 for i, (uid, cred) in enumerate(filtered)]
         embed = discord.Embed(
             title="🏁 Street Cred — Top 10 (serveur)",
             description="\n".join(lines),
