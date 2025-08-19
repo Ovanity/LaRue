@@ -224,39 +224,38 @@ class TabacView(discord.ui.View):
             return
 
         # Préparation carte (cohérente avec le résultat)
+        # ── Scratch with slot-style spins, near-misses, and light copy ────────────────
         cover = "▩"
         symbols_pool = ["🍀", "⭐", "💎", "7️⃣", "🧧"]
         gain_cents = _weight_pick(t["pool"])
 
         def _latin_grid(sym_pool: list[str]) -> list[list[str]]:
-            """Grille perdante : aucune ligne/colonne n'a 3 mêmes symboles."""
-            if len(sym_pool) < 3:
-                a = sym_pool[0]
-                return [[a, cover, a], [cover, a, cover], [a, cover, a]]
-            a, b, c = random.sample(sym_pool, 3)
+            # Grille perdante : aucune ligne/colonne n'a 3 mêmes symboles.
+            a, b, c = (sym_pool + sym_pool)[0:3] if len(sym_pool) < 3 else random.sample(sym_pool, 3)
             base = [[a, b, c], [b, c, a], [c, a, b]]
-            random.shuffle(base)  # mélange les lignes
+            random.shuffle(base)
             cols = list(zip(*base))
-            random.shuffle(cols)  # mélange les colonnes
+            random.shuffle(cols)
             return [list(r) for r in zip(*cols)]
 
         def _two_rows_no_triple(sym_pool: list[str], ban: str) -> list[list[str]]:
-            """Deux lignes sans triplé, et qui évitent les colonnes 3×ban."""
+            # Deux lignes sans triplé, et sans colonnes 3×ban.
             others = [s for s in sym_pool if s != ban] or [ban]
             if len(others) == 1:
                 o = others[0]
-                return [[o, ban, o], [ban, o, ban]]
-            a, b = random.sample(others, 2)
-            rows = [[a, b, a], [b, a, b]]  # pas de triplé dans ces lignes
+                rows = [[o, ban, o], [ban, o, ban]]
+            else:
+                a, b = random.sample(others, 2)
+                rows = [[a, b, a], [b, a, b]]
             random.shuffle(rows)
             return rows
 
-        # Grille solution
+        # 1) Construire la grille finale en cohérence avec le résultat
+        near_miss = False
         if gain_cents > 0:
             win_sym = random.choice(symbols_pool)
             win_row = [win_sym, win_sym, win_sym]
             other_rows = _two_rows_no_triple(symbols_pool, win_sym)
-
             rows = [None, None, None]  # type: ignore[list-item]
             win_idx = random.randrange(3)
             rows[win_idx] = win_row
@@ -264,66 +263,83 @@ class TabacView(discord.ui.View):
             rows[idxs[0]] = other_rows[0]
             rows[idxs[1]] = other_rows[1]
         else:
+            # Grille perdante + une ligne “presque” (2/3 identiques)
             rows = _latin_grid(symbols_pool)
+            nm_sym = random.choice(symbols_pool)
+            miss_row = [nm_sym, nm_sym, random.choice([s for s in symbols_pool if s != nm_sym])]
+            random.shuffle(miss_row)
+            rows[random.randrange(3)] = miss_row
+            near_miss = True
 
-        # 1) état couvert
+        # Helper rendu avec colonne en spin
+        def _render_grid(final_rows: list[list[str]], revealed_cols: int, spinning_col: int | None) -> str:
+            lines: list[str] = []
+            for r in range(3):
+                line: list[str] = []
+                for c in range(3):
+                    if c < revealed_cols:
+                        line.append(final_rows[r][c])
+                    elif spinning_col is not None and c == spinning_col:
+                        line.append(random.choice(symbols_pool))
+                    else:
+                        line.append(cover)
+                lines.append(" ".join(line))
+            return "```\n" + "\n".join(lines) + "\n```"
+
+        # 2) Afficher l’état couvert puis animer chaque colonne (3–5 frames rapides)
         e = self._base_embed(storage)
-        covered = "\n".join(" ".join([cover] * 3) for _ in range(3))
-        e.add_field(name="🧩 Carte", value=f"```\n{covered}\n```", inline=False)
+        e.add_field(name="🎰 Carte", value=_render_grid(rows, 0, 0), inline=False)
         if self.message:
             await self.message.edit(embed=e, view=self)
 
-        # 2) révélation progressive colonne par colonne
-        for step in range(3):
-            await asyncio.sleep(0.8)
-            reveal_lines = []
-            for r in range(3):
-                reveal_lines.append(" ".join(rows[r][c] if c <= step else cover for c in range(3)))
+        for col in range(3):
+            # “spin” court pour cette colonne
+            for _ in range(5):
+                await asyncio.sleep(0.12)
+                e = self._base_embed(storage)
+                e.add_field(name="🎰 Carte", value=_render_grid(rows, col, col), inline=False)
+                if self.message:
+                    await self.message.edit(embed=e, view=self)
+            # verrouille la colonne révélée
             e = self._base_embed(storage)
-            e.add_field(name="🧩 Carte", value="```\n" + "\n".join(reveal_lines) + "\n```", inline=False)
+            e.add_field(name="🎰 Carte", value=_render_grid(rows, col + 1, None), inline=False)
             if self.message:
                 await self.message.edit(embed=e, view=self)
 
-        # 3) crédit + résultat (+ stat)
+        # 3) Crédit + message de résultat (sans tableau “Mise/Gain/Net”)
         if hasattr(storage, "increment_stat"):
             storage.increment_stat(inter.user.id, "tabac_count", 1)
 
         final_money = _add_money(storage, inter.user.id, gain_cents)
-        mise = int(t["price"])
-        net = gain_cents - mise
-
-        # Badge & couleur
-        if net > 0:
-            badge_txt = "🟢 Profit"
-            color = discord.Color.green()
-        elif net == 0:
-            badge_txt = "🟡 Remboursé"
-            color = discord.Color.gold()
-        else:
-            badge_txt = "🔴 Perdu"
-            color = discord.Color.red()
-
-        # fmt_eur gère déjà le signe ; on n'ajoute + que pour un net positif
-        net_str = fmt_eur(net) if net <= 0 else f"+{fmt_eur(net)}"
 
         e = self._base_embed(storage)
-        e.color = color
+        # Grille finale figée
         e.add_field(
-            name="🧩 Carte",
+            name="🎰 Carte",
             value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
             inline=False
         )
-        e.add_field(
-            name="🧾 Reçu",
-            value=(
-                f"• Mise : **{fmt_eur(mise)}**\n"
-                f"• Gain : **{fmt_eur(gain_cents)}**\n"
-                f"• Net  : **{net_str}**\n"
-                f"• Issue : {badge_txt}"
-            ),
-            inline=False
-        )
-        e.add_field(name="\u200b", value=f"**Solde** actuel : {fmt_eur(final_money)}", inline=False)
+
+        if gain_cents > 0:
+            # Win = message court & euphorisant
+            e.color = discord.Color.green()
+            e.add_field(
+                name="✨ Gagné",
+                value=f"Tu prends **+{fmt_eur(gain_cents)}**. Pas mal, chef.",
+                inline=False
+            )
+        else:
+            # Perte = soft landing + near-miss tease (sans chiffres)
+            e.color = discord.Color.dark_grey()
+            tease = "C’était pas loin…" if near_miss else "Rien cette fois."
+            e.add_field(
+                name="😶",
+                value=tease + " Re-tente pour faire mieux.",
+                inline=False
+            )
+
+        # Solde discret
+        e.add_field(name="\u200b", value=f"**Solde** : {fmt_eur(final_money)}", inline=False)
 
         self._locked = False
         self._set_gratter_disabled(False)
