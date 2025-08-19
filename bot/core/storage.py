@@ -107,6 +107,30 @@ class SQLiteStorage(Storage):
                 );
             """)
 
+            # Profils
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS profiles (
+                    user_id   TEXT PRIMARY KEY,
+                    bio       TEXT NOT NULL DEFAULT '',
+                    color_hex TEXT NOT NULL DEFAULT 'FFD166',
+                    title     TEXT NOT NULL DEFAULT '',
+                    cred      INTEGER NOT NULL DEFAULT 0,
+                    created_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+                );
+            """)
+
+            # Respect 1/jour/par paire (from -> to)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS respect_log (
+                    user_id TEXT NOT NULL,  -- reçoit
+                    from_id TEXT NOT NULL,  -- donne
+                    day     TEXT NOT NULL,  -- YYYY-MM-DD (même logique que _today_str)
+                    delta   INTEGER NOT NULL,
+                    ts      INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, from_id, day)
+                );
+            """)
+
     # ── API joueurs
     def get_player(self, user_id: int) -> Player:
         uid = str(user_id)
@@ -315,3 +339,79 @@ class SQLiteStorage(Storage):
     def reset_stats(self) -> None:
         with self._conn() as con:
             con.execute("DELETE FROM stats;")
+
+    # ── Profils ─────────────────────────────────────────────────────────
+    def get_profile(self, user_id: int) -> dict:
+        uid = str(user_id)
+        with self._conn() as con:
+            row = con.execute(
+                "SELECT bio, color_hex, title, cred, created_ts FROM profiles WHERE user_id=?",
+                (uid,)
+            ).fetchone()
+            if row is None:
+                con.execute(
+                    "INSERT INTO profiles(user_id, bio, color_hex, title, cred) VALUES(?,?,?,?,?)",
+                    (uid, '', 'FFD166', '', 0)
+                )
+                return {"bio": "", "color_hex": "FFD166", "title": "", "cred": 0, "created_ts": int(time.time())}
+            bio, color_hex, title, cred, created_ts = row
+            return {"bio": bio, "color_hex": color_hex, "title": title, "cred": int(cred),
+                    "created_ts": int(created_ts)}
+
+    def upsert_profile(self, user_id: int, **fields) -> dict:
+        p = self.get_profile(user_id)
+        p.update(fields)
+        uid = str(user_id)
+        with self._conn() as con:
+            con.execute("""
+                INSERT INTO profiles(user_id, bio, color_hex, title, cred)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    bio=excluded.bio, color_hex=excluded.color_hex,
+                    title=excluded.title, cred=excluded.cred
+            """, (uid, p.get("bio", ""), p.get("color_hex", "FFD166"), p.get("title", ""), int(p.get("cred", 0))))
+        return p
+
+    # ── Respect (1/jour/par paire) ─────────────────────────────────────
+    def can_give_respect(self, from_id: int, to_id: int) -> tuple[bool, str | None]:
+        if from_id == to_id:
+            return False, "😅 Tu peux pas te respecter toi-même."
+        day = self._today_str()
+        with self._conn() as con:
+            row = con.execute(
+                "SELECT 1 FROM respect_log WHERE user_id=? AND from_id=? AND day=?",
+                (str(to_id), str(from_id), day)
+            ).fetchone()
+        if row:
+            return False, "⏳ Tu as déjà donné du respect à cette personne aujourd’hui."
+        return True, None
+
+    def give_respect(self, from_id: int, to_id: int) -> int:
+        ok, why = self.can_give_respect(from_id, to_id)
+        if not ok:
+            raise ValueError(why or "not allowed")
+        uid_to = str(to_id)
+        with self._conn() as con:
+            # s’assure que le profil existe
+            con.execute(
+                "INSERT INTO profiles(user_id, bio, color_hex, title, cred) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(user_id) DO NOTHING",
+                (uid_to, '', 'FFD166', '', 0)
+            )
+            # log 1/jour
+            con.execute(
+                "INSERT OR IGNORE INTO respect_log(user_id, from_id, day, delta, ts) VALUES(?,?,?,?,strftime('%s','now'))",
+                (uid_to, str(from_id), self._today_str(), 1)
+            )
+            # si le log a été inséré, incrémente
+            con.execute("UPDATE profiles SET cred = cred + 1 WHERE user_id=?", (uid_to,))
+            (cred,) = con.execute("SELECT cred FROM profiles WHERE user_id=?", (uid_to,)).fetchone()
+        return int(cred)
+
+    def top_profiles_by_cred(self, limit: int = 10) -> list[tuple[str, int]]:
+        with self._conn() as con:
+            rows = con.execute(
+                "SELECT user_id, cred FROM profiles ORDER BY cred DESC, user_id ASC LIMIT ?",
+                (int(limit),)
+            ).fetchall()
+        return [(uid, int(cred)) for (uid, cred) in rows]
