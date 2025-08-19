@@ -160,7 +160,7 @@ class TabacView(discord.ui.View):
             self._locked = False
             self._set_gratter_disabled(False)
             await inter.response.send_message(
-                f"💸 Il te manque **{fmt_eur(price - have)}** pour ce ticket.",
+                f"Il te manque **{fmt_eur(price - have)}** pour ce ticket.",
                 ephemeral=True
             )
             return
