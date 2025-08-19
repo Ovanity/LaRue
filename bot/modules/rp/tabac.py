@@ -30,7 +30,7 @@ TICKETS: dict[str, dict] = {
             (200, 80), (500, 25), (1000, 5),
         ],  # EV ≈ 0,62 € → 62%
         "emoji": "🎟️",
-        "desc": "Le classique à 1 €. Souvent BAN, parfois CO. La FDJ te dit merci.",
+        "desc": "Le classique. Souvent BAN, parfois CO. La FDP te dit merci.",
     },
     "astro": {
         "name": "ASTRO",
@@ -60,7 +60,7 @@ TICKETS: dict[str, dict] = {
             (1000, 70), (2000, 40), (5000, 10), (10000, 5),
         ],  # EV ≈ 3,42 € → 68%
         "emoji": "💵",
-        "desc": "Le nom fait rêver, la réalité fait rire (surtout la FDJ).",
+        "desc": "Le nom fait rêver, la réalité fait rire (surtout la FDP).",
     },
     "million": {
         "name": "MILLIONNAIRE",
