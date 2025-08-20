@@ -118,8 +118,7 @@ def _embed_statut(storage, uid: int) -> discord.Embed:
     e = discord.Embed(
         title="♻️ Recyclerie de canettes",
         description=(
-            "Chaque jour : **1 encaissement** (consomme **1 sac**)"
-            "Le bonus augmente avec ta **série**."
+            "Chaque jour : **1 encaissement** (consomme **1 sac**)."
         ),
         color=discord.Color.dark_teal(),
     )
