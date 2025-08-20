@@ -118,17 +118,17 @@ def _embed_statut(storage, uid: int) -> discord.Embed:
     e = discord.Embed(
         title="♻️ Recyclerie de canettes",
         description=(
-            "Chaque jour **à partir de 08:00** : tu peux *encaisser* **1 jour** "
-            "(consomme **1 sac**). Le bonus augmente avec ta **série**."
+            "Chaque jour : **1 encaissement** (consomme **1 sac**)"
+            "Le bonus augmente avec ta **série**."
         ),
         color=discord.Color.dark_teal(),
     )
     e.add_field(name="🧺 Sacs prêts",        value=str(st["sacs"]),     inline=True)
     e.add_field(name="🥤 Canettes en vrac",  value=str(st["canettes"]), inline=True)
-    e.add_field(name="⏳ Jours à encaisser", value=f"**{pend}**\n*(1 sac/jour)*", inline=True)
+    e.add_field(name="⏳ Jours à encaisser", value=str(pend), inline=True)
 
     e.add_field(
-        name="💰 Valeur par sac si tu encaisses maintenant",
+        name="💰 Valeur par sac",
         value=f"**{fmt_eur(per_sac)}**  *(bonus série : +{bonus_pct}%)*",
         inline=False
     )
@@ -137,9 +137,6 @@ def _embed_statut(storage, uid: int) -> discord.Embed:
         value=f"**{st['streak']} / {STREAK_CAP_DAYS}**  {streak_bar}",
         inline=False
     )
-    # champ reset type cooldown
-    name, val = _reset_field()
-    e.add_field(name=name, value=val, inline=False)
 
     e.set_footer(text=f"{CANETTES_PAR_SAC} canettes = 1 sac • rattrapage max {BACKLOG_MAX_DAYS} j • reset 08:00")
     return e
