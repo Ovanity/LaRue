@@ -171,7 +171,6 @@ async def shop_inventory(inter: Interaction):
         description="\n".join(lines),
         color=discord.Color.blurple()
     )
-    embed.set_footer(text=f"Solde: {_fmt_eur_plain(money_cents)}")
     await inter.response.send_message(embed=embed, ephemeral=False)
 
 def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None):
