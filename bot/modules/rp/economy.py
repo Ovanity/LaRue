@@ -19,9 +19,9 @@ except Exception:
 
 # ───────── Équilibrage (centimes) ─────────
 MENDIER_COOLDOWN_S  = 60 * 15         # 1h
-FOUILLER_COOLDOWN_S = 60 * 60 * 24    # 24h
+FOUILLER_COOLDOWN_S = 60 * 60     # 24h
 MENDIER_DAILY_CAP   = 10              # 10/jour
-FOUILLER_DAILY_CAP  = 1               # 1/jour
+FOUILLER_DAILY_CAP  = 5               # 1/jour
 
 # Gains/pertes (centimes)
 MENDIER_MIN_CENTS = 5      # 0,05€
