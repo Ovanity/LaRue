@@ -37,6 +37,16 @@ DAILY_LIMIT_MSGS = {
 }
 
 # ───────── Utils (classement + cooldown UX) ─────────
+
+def _fmt_delta(delta_cents: int) -> str:
+    # Un seul signe, et fmt_eur ne reçoit que la valeur absolue
+    amount = fmt_eur(abs(delta_cents))
+    if delta_cents > 0:
+        return f"+{amount}"
+    if delta_cents < 0:
+        return f"-{amount}"
+    return amount
+
 def _medal(i: int) -> str:
     return "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🏅"
 
@@ -142,7 +152,7 @@ def _result_embed(
     if show_money:
         gain = fmt_eur(delta_cents)
         total = fmt_eur(total_cents)
-        e.add_field(name="💸 Gain", value=f"**{('+' if delta_cents>0 else '')}{gain}**", inline=True)
+        e.add_field(name="💸 Gain", value=f"**{_fmt_delta(delta_cents)}**", inline=True)
         e.add_field(name="💰 Capital", value=f"**{total}**", inline=True)
 
     if show_cooldown:
@@ -270,16 +280,16 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
     # ── NEW: loot de canettes
     drop = maybe_grant_canettes_after_fouiller(storage, inter.user.id)  # int
 
-    # Texte/ couleur selon issue argent
+    # Texte / couleur selon issue argent (couleur du RÉSULTAT)
     if res["delta"] > 0:
         flavor = "🧳 Entre canettes et cartons… un truc revendable !"
-        color = discord.Color.green()
+        result_color = discord.Color.green()
     elif res["delta"] == 0:
         flavor = "🗑️ Bruit, odeur, rats… et rien au fond."
-        color = discord.Color.gold()
+        result_color = discord.Color.gold()
     else:
         flavor = "🙄 Mauvaise rencontre. Le trottoir t’a coûté des sous."
-        color = discord.Color.red()
+        result_color = discord.Color.red()
 
     # Si canettes uniquement (pas d’argent), on n’affiche pas “Gain/Capital”
     canettes_only = (drop > 0 and res["delta"] == 0)
@@ -292,25 +302,27 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
         flavor=flavor,
         delta_cents=res["delta"],
         total_cents=res["money"],
-        color=color,
+        color=result_color,           # ← couleur uniquement sur le résultat
         storage=storage,
         user_id=inter.user.id,
         action_key="fouiller",
         cooldown_s=FOUILLER_COOLDOWN_S,
         cap=FOUILLER_DAILY_CAP,
         show_cooldown=False,
-        show_money=not canettes_only,   # ← cache les champs argent si drop seul
+        show_money=not canettes_only,
     )
 
-    # Si on a à la fois de l’argent ET des canettes → afficher le bonus canettes
     if drop > 0 and not canettes_only:
         final_embed.add_field(name="♻️ Bonus", value=f"+{drop} canettes (à compresser)", inline=False)
+
+    # Couleur NEUTRE pendant l'animation (pas de spoil)
+    anim_color = discord.Color.dark_grey()
 
     await _play_anim_then_finalize(
         inter,
         title="🗑️ Fouiller",
         pre_lines=["♻️ Tu soulèves le couvercle…", "🔦 Tu éclaires tout au fond…", "🫳 Tu tires quelque chose…"],
-        color=color,
+        color=anim_color,             # ← neutre pendant l’anim
         final_embed=final_embed,
         delay=0.6
     )
