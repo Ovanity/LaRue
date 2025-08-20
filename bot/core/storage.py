@@ -42,6 +42,12 @@ class Storage:
     def reset_inventory(self) -> None: ...
     def reset_stats(self) -> None: ...
 
+    # recyclerie
+    def get_recycler_state(self, user_id: int) -> dict: ...
+    def update_recycler_state(self, user_id: int, **fields) -> dict: ...
+    def add_recycler_canettes(self, user_id: int, qty: int) -> int: ...
+    def add_recycler_sacs(self, user_id: int, qty: int) -> int: ...
+    def log_recycler_claim(self, user_id: int, day_key: int, sacs_used: int, gross: int, tax: int, net: int) -> None: ...
 # ───────── Implémentation SQLite
 class SQLiteStorage(Storage):
     def __init__(self, root: str):
@@ -130,6 +136,35 @@ class SQLiteStorage(Storage):
                     PRIMARY KEY (user_id, from_id, day)
                 );
             """)
+
+            # Recyclerie — état courant par joueur
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS recycler_state (
+                    user_id    TEXT PRIMARY KEY,
+                    level      INTEGER NOT NULL DEFAULT 1,
+                    canettes   INTEGER NOT NULL DEFAULT 0,
+                    sacs       INTEGER NOT NULL DEFAULT 0,
+                    streak     INTEGER NOT NULL DEFAULT 0,
+                    last_day   INTEGER NOT NULL DEFAULT 0, -- AAAAMMJJ (jour logique 08:00)
+                    updated_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+                );
+            """)
+
+            # Journal des encaissements (debug/anti-abus/analytics)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS recycler_claims (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id   TEXT NOT NULL,
+                    day_key   INTEGER NOT NULL,  -- AAAAMMJJ encaissé
+                    sacs_used INTEGER NOT NULL,
+                    gross     INTEGER NOT NULL,
+                    tax       INTEGER NOT NULL,
+                    net       INTEGER NOT NULL,
+                    ts        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                    UNIQUE(user_id, day_key)
+                );
+            """)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_recycler_claims_user ON recycler_claims(user_id);")
 
     # ── API joueurs
     def get_player(self, user_id: int) -> Player:
@@ -415,3 +450,66 @@ class SQLiteStorage(Storage):
                 (int(limit),)
             ).fetchall()
         return [(uid, int(cred)) for (uid, cred) in rows]
+
+    # ── Recyclerie ──────────────────────────────────────────────────────
+    def get_recycler_state(self, user_id: int) -> dict:
+        uid = str(user_id)
+        with self._conn() as con:
+            row = con.execute("""
+                SELECT level, canettes, sacs, streak, last_day
+                FROM recycler_state WHERE user_id=?
+            """, (uid,)).fetchone()
+            if row is None:
+                con.execute("INSERT INTO recycler_state(user_id) VALUES(?)", (uid,))
+                return {"level": 1, "canettes": 0, "sacs": 0, "streak": 0, "last_day": 0}
+            level, canettes, sacs, streak, last_day = row
+            return {
+                "level": int(level), "canettes": int(canettes), "sacs": int(sacs),
+                "streak": int(streak), "last_day": int(last_day)
+            }
+
+    def update_recycler_state(self, user_id: int, **fields) -> dict:
+        # merge avec l’état courant + UPSERT
+        st = self.get_recycler_state(user_id)
+        # ne garder que les clés connues
+        allowed = {"level", "canettes", "sacs", "streak", "last_day"}
+        for k, v in list(fields.items()):
+            if k in allowed:
+                st[k] = int(v)
+        uid = str(user_id)
+        with self._conn() as con:
+            con.execute("""
+                INSERT INTO recycler_state(user_id, level, canettes, sacs, streak, last_day, updated_ts)
+                VALUES(?,?,?,?,?,?, strftime('%s','now'))
+                ON CONFLICT(user_id) DO UPDATE SET
+                  level=excluded.level,
+                  canettes=excluded.canettes,
+                  sacs=excluded.sacs,
+                  streak=excluded.streak,
+                  last_day=excluded.last_day,
+                  updated_ts=excluded.updated_ts
+            """, (uid, st["level"], st["canettes"], st["sacs"], st["streak"], st["last_day"]))
+        return st
+
+    def add_recycler_canettes(self, user_id: int, qty: int) -> int:
+        if int(qty) == 0:
+            return self.get_recycler_state(user_id)["canettes"]
+        st = self.get_recycler_state(user_id)
+        st["canettes"] = max(0, st["canettes"] + int(qty))
+        self.update_recycler_state(user_id, **st)
+        return st["canettes"]
+
+    def add_recycler_sacs(self, user_id: int, qty: int) -> int:
+        if int(qty) == 0:
+            return self.get_recycler_state(user_id)["sacs"]
+        st = self.get_recycler_state(user_id)
+        st["sacs"] = max(0, st["sacs"] + int(qty))
+        self.update_recycler_state(user_id, **st)
+        return st["sacs"]
+
+    def log_recycler_claim(self, user_id: int, day_key: int, sacs_used: int, gross: int, tax: int, net: int) -> None:
+        with self._conn() as con:
+            con.execute("""
+                INSERT OR IGNORE INTO recycler_claims(user_id, day_key, sacs_used, gross, tax, net)
+                VALUES(?,?,?,?,?,?)
+            """, (str(user_id), int(day_key), int(sacs_used), int(gross), int(tax), int(net)))

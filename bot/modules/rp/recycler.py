@@ -40,56 +40,23 @@ def _today_key() -> int:
         start -= timedelta(days=1)
     return int(start.strftime("%Y%m%d"))
 
-def _defaults() -> dict:
-    return {
-        "recy_level": 1,
-        "recy_canettes": 0,
-        "recy_sacs": 0,
-        "recy_streak": 0,
-        "recy_last_day": 0,  # AAAAMMJJ (0 = jamais collecté)
-    }
-
-def _load_state(storage, uid: int) -> dict:
-    prof = storage.get_profile(uid) or {}
-    base = _defaults()
-    for k in base:
-        if k in prof:
-            base[k] = prof[k]
-    # types sûrs
-    base["recy_level"]    = int(base["recy_level"] or 1)
-    base["recy_canettes"] = int(base["recy_canettes"] or 0)
-    base["recy_sacs"]     = int(base["recy_sacs"] or 0)
-    base["recy_streak"]   = int(base["recy_streak"] or 0)
-    base["recy_last_day"] = int(base["recy_last_day"] or 0)
-    return base
-
-def _save_state(storage, uid: int, st: dict) -> None:
-    storage.upsert_profile(
-        uid,
-        recy_level= int(st["recy_level"]),
-        recy_canettes=int(st["recy_canettes"]),
-        recy_sacs=int(st["recy_sacs"]),
-        recy_streak=int(st["recy_streak"]),
-        recy_last_day=int(st["recy_last_day"]),
-    )
-
-def _pending_days(st: dict) -> int:
-    """
-    Combien de jours de claim disponibles (rattrapage compris, capped).
-    """
-    today = _today_key()
-    last  = int(st["recy_last_day"] or 0)
-    if last <= 0:
-        return 1  # premier claim offert
-    diff = max(0, _diff_days_key(last, today))
-    return min(diff, BACKLOG_MAX_DAYS)
-
 def _diff_days_key(d1_key: int, d2_key: int) -> int:
     # convertit AAAAMMJJ → datetime (à DAY_START_HOUR), calcule la diff
     z = ZoneInfo(TZ_NAME)
     d1 = datetime.strptime(str(d1_key), "%Y%m%d").replace(tzinfo=z, hour=DAY_START_HOUR)
     d2 = datetime.strptime(str(d2_key), "%Y%m%d").replace(tzinfo=z, hour=DAY_START_HOUR)
     return (d2 - d1).days
+
+def _pending_days(state: dict) -> int:
+    """
+    Combien de jours de claim disponibles (rattrapage compris, capped).
+    """
+    today = _today_key()
+    last  = int(state["last_day"] or 0)
+    if last <= 0:
+        return 1  # premier claim offert
+    diff = max(0, _diff_days_key(last, today))
+    return min(diff, BACKLOG_MAX_DAYS)
 
 def _current_net_value_per_sac(level: int, streak: int) -> Tuple[int, int, int]:
     """
@@ -106,20 +73,19 @@ def _current_net_value_per_sac(level: int, streak: int) -> Tuple[int, int, int]:
 # Embeds
 # ───────────────────────────────────────────────────────────────────
 def _embed_statut(storage, uid: int) -> discord.Embed:
-    st = _load_state(storage, uid)
-    today  = _today_key()
-    pend   = _pending_days(st)
-    gross, tax, net = _current_net_value_per_sac(st["recy_level"], st["recy_streak"])
+    st = storage.get_recycler_state(uid)
+    pend = _pending_days(st)
+    gross, tax, net = _current_net_value_per_sac(st["level"], st["streak"])
 
-    streak_bar = "🟩" * min(st["recy_streak"], STREAK_CAP_DAYS) + "⬛" * max(0, STREAK_CAP_DAYS - st["recy_streak"])
+    streak_bar = "🟩" * min(st["streak"], STREAK_CAP_DAYS) + "⬛" * max(0, STREAK_CAP_DAYS - st["streak"])
     e = discord.Embed(
         title="♻️ Recyclerie de canettes",
         description="Transforme **canettes** → **sacs** → **cash** chaque jour.",
         color=discord.Color.dark_teal(),
     )
-    e.add_field(name="🧺 Sacs prêts", value=str(st["recy_sacs"]), inline=True)
-    e.add_field(name="🥤 Canettes en vrac", value=str(st["recy_canettes"]), inline=True)
-    e.add_field(name="⏳ Jours à encaisser", value=str(pend), inline=True)
+    e.add_field(name="🧺 Sacs prêts",        value=str(st["sacs"]),     inline=True)
+    e.add_field(name="🥤 Canettes en vrac",  value=str(st["canettes"]), inline=True)
+    e.add_field(name="⏳ Jours à encaisser", value=str(pend),            inline=True)
 
     e.add_field(
         name="💰 Valeur par sac (net)",
@@ -128,21 +94,21 @@ def _embed_statut(storage, uid: int) -> discord.Embed:
     )
     e.add_field(
         name="🔥 Série (streak)",
-        value=f"{st['recy_streak']}/{STREAK_CAP_DAYS}  {streak_bar}",
+        value=f"{st['streak']}/{STREAK_CAP_DAYS}  {streak_bar}",
         inline=False
     )
     e.set_footer(text=f"{CANETTES_PAR_SAC} canettes = 1 sac • rattrapage max {BACKLOG_MAX_DAYS} j")
     return e
 
-def _embed_collect_result(storage, uid: int, was_claimed: int, paid_total_cents: int, new_state: dict) -> discord.Embed:
+def _embed_collect_result(was_claimed: int, paid_total_cents: int, new_state: dict) -> discord.Embed:
     e = discord.Embed(
         title="✅ Collecte effectuée",
         description=f"Tu encaisses **{was_claimed}** jour(s).",
         color=discord.Color.green()
     )
-    e.add_field(name="💵 Cash reçu", value=f"**{fmt_eur(paid_total_cents)}**", inline=True)
-    e.add_field(name="🧺 Sacs restants", value=str(new_state["recy_sacs"]), inline=True)
-    e.add_field(name="🔥 Série (streak)", value=str(new_state["recy_streak"]), inline=True)
+    e.add_field(name="💵 Cash reçu",      value=f"**{fmt_eur(paid_total_cents)}**", inline=True)
+    e.add_field(name="🧺 Sacs restants",  value=str(new_state["sacs"]),             inline=True)
+    e.add_field(name="🔥 Série (streak)", value=str(new_state["streak"]),           inline=True)
     e.set_footer(text="Reviens demain à partir de 08:00 (heure Paris).")
     return e
 
@@ -152,13 +118,13 @@ def _embed_compresser_result(nb_sacs: int, canettes_consommees: int, st: dict) -
         description=f"Tu as compacté **{canettes_consommees}** canettes → **{nb_sacs}** sac(s).",
         color=discord.Color.dark_gold()
     )
-    e.add_field(name="🧺 Sacs totaux", value=str(st["recy_sacs"]), inline=True)
-    e.add_field(name="🥤 Canettes restantes", value=str(st["recy_canettes"]), inline=True)
+    e.add_field(name="🧺 Sacs totaux",         value=str(st["sacs"]),     inline=True)
+    e.add_field(name="🥤 Canettes restantes",  value=str(st["canettes"]), inline=True)
     e.set_footer(text=f"{CANETTES_PAR_SAC} canettes = 1 sac")
     return e
 
 # ───────────────────────────────────────────────────────────────────
-# Logic
+# Logic helpers
 # ───────────────────────────────────────────────────────────────────
 def _ensure_started(inter: Interaction) -> bool:
     storage = inter.client.storage
@@ -166,28 +132,25 @@ def _ensure_started(inter: Interaction) -> bool:
     return bool(p and p.get("has_started"))
 
 def _require_started(inter: Interaction) -> bool:
-    if not _ensure_started(inter):
-        # on garde le même wording que le reste de ton bot
-        # (pas ephemeral=False ici pour éviter le bruit)
-        return False
-    return True
+    return _ensure_started(inter)
 
-def _craft_sacs_from_canettes(st: dict, nb_souhaite: Optional[int]) -> Tuple[int, int]:
+def _craft_sacs_from_canettes(state: dict, nb_souhaite: Optional[int]) -> Tuple[int, int]:
     """
     nb_souhaite=None → craft tout. Retourne (nb_sacs_craftés, canettes_consommées).
     """
-    possible = st["recy_canettes"] // CANETTES_PAR_SAC
+    possible = state["canettes"] // CANETTES_PAR_SAC
     to_make = possible if (nb_souhaite is None or nb_souhaite > possible) else max(0, int(nb_souhaite))
     if to_make <= 0:
         return 0, 0
     consume = to_make * CANETTES_PAR_SAC
-    st["recy_canettes"] -= consume
-    st["recy_sacs"]     += to_make
+    state["canettes"] -= consume
+    state["sacs"]     += to_make
     return to_make, consume
 
-def _claim_days(st: dict, nb: int) -> Tuple[int, int]:
+def _claim_days(storage, uid: int, state: dict, nb: int) -> Tuple[int, int]:
     """
     Applique jusqu'à 'nb' claims (1 sac/claim, 1 jour/claim).
+    Log chaque jour dans recycler_claims.
     Retourne (nb_claims_effectués, total_net_pay_cents).
     """
     today = _today_key()
@@ -195,32 +158,36 @@ def _claim_days(st: dict, nb: int) -> Tuple[int, int]:
     done = 0
 
     # combien de jours dispo + limite sacs
-    pend = _pending_days(st)
-    nb = max(0, min(nb, pend, st["recy_sacs"]))
+    pend = _pending_days(state)
+    nb = max(0, min(nb, pend, state["sacs"]))
     if nb <= 0:
         return 0, 0
 
     # streak: s'il y a un trou (>1 jour), on reset d'abord
-    if st["recy_last_day"] > 0:
-        miss = _diff_days_key(st["recy_last_day"], today)
+    if state["last_day"] > 0:
+        miss = _diff_days_key(state["last_day"], today)
         if miss > 1:
-            st["recy_streak"] = 0
+            state["streak"] = 0
 
     # on "simule" jour par jour
-    cur_day = st["recy_last_day"] if st["recy_last_day"] else (today - 1)
+    cur_day = state["last_day"] if state["last_day"] else (today - 1)
     for _ in range(nb):
         # avancer d'un jour
         cur_day += 1
         # appliquer streak (+1 jusqu'au cap)
-        st["recy_streak"] = min(STREAK_CAP_DAYS, st["recy_streak"] + 1)
+        state["streak"] = min(STREAK_CAP_DAYS, state["streak"] + 1)
 
         # payer ce jour
-        _, _, net = _current_net_value_per_sac(st["recy_level"], st["recy_streak"])
+        gross, tax, net = _current_net_value_per_sac(state["level"], state["streak"])
         paid_total += net
-        st["recy_sacs"] = max(0, st["recy_sacs"] - 1)
+        state["sacs"] = max(0, state["sacs"] - 1)
         done += 1
 
-    st["recy_last_day"] = today
+        # journalisation (anti-abus / analytics)
+        if hasattr(storage, "log_recycler_claim"):
+            storage.log_recycler_claim(uid, cur_day, 1, gross, tax, net)
+
+    state["last_day"] = today
     return done, paid_total
 
 # ───────────────────────────────────────────────────────────────────
@@ -245,13 +212,13 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             await inter.response.send_message("🚀 Lance **/start** pour déverrouiller la recyclerie.", ephemeral=True)
             return
 
-        st = _load_state(storage, inter.user.id)
+        st = storage.get_recycler_state(inter.user.id)
         made, consumed = _craft_sacs_from_canettes(st, sacs)
         if made <= 0:
             await inter.response.send_message("🙃 Pas assez de canettes pour faire un sac.", ephemeral=True)
             return
 
-        _save_state(storage, inter.user.id, st)
+        storage.update_recycler_state(inter.user.id, **st)
         await inter.response.send_message(embed=_embed_compresser_result(made, consumed, st))
 
     @group.command(name="collecter", description="Encaisser (1 sac par jour disponible, rattrapage limité)")
@@ -262,13 +229,13 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             await inter.response.send_message("🚀 Lance **/start** pour déverrouiller la recyclerie.", ephemeral=True)
             return
 
-        st = _load_state(storage, inter.user.id)
+        st = storage.get_recycler_state(inter.user.id)
         nb = 1 if (nb is None or nb <= 0) else int(nb)
 
-        done, paid = _claim_days(st, nb)
+        done, paid = _claim_days(storage, inter.user.id, st, nb)
         if done <= 0:
             # Feedback précis
-            if st["recy_sacs"] <= 0:
+            if st["sacs"] <= 0:
                 msg = "🧺 Tu n’as pas de sac prêt."
             elif _pending_days(st) <= 0:
                 msg = "⏳ Rien à encaisser pour l’instant. Reviens après 08:00."
@@ -284,8 +251,8 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             p = storage.get_player(inter.user.id)
             storage.update_player(inter.user.id, money=int(p["money"]) + paid)
 
-        _save_state(storage, inter.user.id, st)
-        await inter.response.send_message(embed=_embed_collect_result(storage, inter.user.id, done, paid, st))
+        storage.update_recycler_state(inter.user.id, **st)
+        await inter.response.send_message(embed=_embed_collect_result(done, paid, st))
 
     # Enregistre le groupe
     if guild_obj:
@@ -298,7 +265,7 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
 # ───────────────────────────────────────────────────────────────────
 def maybe_grant_canettes_after_fouiller(storage, user_id: int, *, prob: float = 0.6, roll_min: int = 8, roll_max: int = 20) -> int:
     """
-    Avec une proba 'prob', ajoute aléatoirement des canettes (roll_min..roll_max) au profil.
+    Avec une proba 'prob', ajoute aléatoirement des canettes (roll_min..roll_max) au state recyclerie.
     Retourne le nombre ajouté (0 si rien).
     Appelle-la juste après ta résolution de fouiller().
     """
@@ -306,7 +273,11 @@ def maybe_grant_canettes_after_fouiller(storage, user_id: int, *, prob: float = 
     if random.random() > max(0.0, min(1.0, prob)):
         return 0
     add = random.randint(int(roll_min), int(roll_max))
-    st = _load_state(storage, user_id)
-    st["recy_canettes"] += add
-    _save_state(storage, user_id, st)
+    if hasattr(storage, "add_recycler_canettes"):
+        storage.add_recycler_canettes(user_id, add)
+    else:
+        # fallback très sûr si l’impl n’a pas encore la méthode (dev)
+        st = storage.get_recycler_state(user_id)
+        st["canettes"] += add
+        storage.update_recycler_state(user_id, **st)
     return add

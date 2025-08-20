@@ -35,6 +35,7 @@ MODULES = [
     "bot.modules.system.sysinfo",
     "bot.modules.rp.tabac",
     "bot.modules.social.profile",
+    "bot.modules.rp.recycler"
 
 ]
 
