@@ -25,7 +25,7 @@ FOUILLER_DAILY_CAP  = 1               # 1/jour
 
 # Gains/pertes (centimes)
 MENDIER_MIN_CENTS = 5      # 0,05€
-MENDIER_MAX_CENTS = 80     # 0,80€
+MENDIER_MAX_CENTS = 100     # 0,80€
 FOUILLER_GOOD_MIN = 50     # 0,50€
 FOUILLER_GOOD_MAX = 300    # 3,00€
 FOUILLER_BAD_LOSS = 100    # -1,00€ max
