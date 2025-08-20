@@ -10,6 +10,13 @@ from zoneinfo import ZoneInfo
 from bot.modules.rp.boosts import compute_power
 from bot.modules.common.money import fmt_eur
 
+# ── NEW: hook recyclerie (no-op si absent)
+try:
+    from bot.modules.rp.recycler import maybe_grant_canettes_after_fouiller
+except Exception:
+    def maybe_grant_canettes_after_fouiller(storage, user_id: int, prob: float = 0.6, roll_min: int = 8, roll_max: int = 20) -> int:
+        return 0
+
 # ───────── Équilibrage (centimes) ─────────
 MENDIER_COOLDOWN_S  = 60 * 60         # 1h
 FOUILLER_COOLDOWN_S = 60 * 60 * 24    # 24h
@@ -123,19 +130,21 @@ def _result_embed(
     action_key: str,
     cooldown_s: int,
     cap: int,
-    show_cooldown: bool = False,   # <- NEW: par défaut on n'affiche pas
+    show_cooldown: bool = False,   # on n’affiche pas par défaut
+    show_money: bool = True,       # ── NEW: permet de cacher “Gain/Capital”
 ) -> discord.Embed:
-    gain = fmt_eur(delta_cents)
-    total = fmt_eur(total_cents)
     e = discord.Embed(
         title=f"{icon}  {title}",
         description=flavor,
         color=color
     )
-    e.add_field(name="💸 Gain", value=f"**{('+' if delta_cents>0 else '')}{gain}**", inline=True)
-    e.add_field(name="💰 Capital", value=f"**{total}**", inline=True)
 
-    # Affichage du cooldown optionnel
+    if show_money:
+        gain = fmt_eur(delta_cents)
+        total = fmt_eur(total_cents)
+        e.add_field(name="💸 Gain", value=f"**{('+' if delta_cents>0 else '')}{gain}**", inline=True)
+        e.add_field(name="💰 Capital", value=f"**{total}**", inline=True)
+
     if show_cooldown:
         name, val = _cooldown_field(storage, user_id, action_key, cooldown_s, cap)
         e.add_field(name=name, value=val, inline=False)
@@ -210,7 +219,6 @@ def poches_action(storage, user_id: int) -> discord.Embed:
 
 # ───────── Flows publics pour réutilisation (Start, autres UIs) ─────────
 async def play_mendier(inter: Interaction, *, storage=None) -> bool:
-    """Flow complet: vérifs, anims, résultat. Renvoie True si l’action a été exécutée."""
     storage = storage or inter.client.storage
     p = storage.get_player(inter.user.id)
     if not p or not p.get("has_started"):
@@ -234,6 +242,7 @@ async def play_mendier(inter: Interaction, *, storage=None) -> bool:
         cooldown_s=MENDIER_COOLDOWN_S,
         cap=MENDIER_DAILY_CAP,
         show_cooldown=False,
+        show_money=True,
     )
     await _play_anim_then_finalize(
         inter,
@@ -246,7 +255,6 @@ async def play_mendier(inter: Interaction, *, storage=None) -> bool:
     return True
 
 async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
-    """Flow complet: vérifs, anims, résultat. Renvoie True si l’action a été exécutée."""
     storage = storage or inter.client.storage
     p = storage.get_player(inter.user.id)
     if not p or not p.get("has_started"):
@@ -256,7 +264,13 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
     if not ok:
         await inter.response.send_message(msg, ephemeral=True)
         return False
+
     res = fouiller_action(storage, inter.user.id)
+
+    # ── NEW: loot de canettes
+    drop = maybe_grant_canettes_after_fouiller(storage, inter.user.id)  # int
+
+    # Texte/ couleur selon issue argent
     if res["delta"] > 0:
         flavor = "🧳 Entre canettes et cartons… un truc revendable !"
         color = discord.Color.green()
@@ -266,6 +280,12 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
     else:
         flavor = "🙄 Mauvaise rencontre. Le trottoir t’a coûté des sous."
         color = discord.Color.red()
+
+    # Si canettes uniquement (pas d’argent), on n’affiche pas “Gain/Capital”
+    canettes_only = (drop > 0 and res["delta"] == 0)
+    if canettes_only:
+        flavor = f"♻️ Tas de canettes récupérées : **+{drop}** (à compresser)"
+
     final_embed = _result_embed(
         title="Fouiller",
         icon="🗑️",
@@ -279,7 +299,13 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
         cooldown_s=FOUILLER_COOLDOWN_S,
         cap=FOUILLER_DAILY_CAP,
         show_cooldown=False,
+        show_money=not canettes_only,   # ← cache les champs argent si drop seul
     )
+
+    # Si on a à la fois de l’argent ET des canettes → afficher le bonus canettes
+    if drop > 0 and not canettes_only:
+        final_embed.add_field(name="♻️ Bonus", value=f"+{drop} canettes (à compresser)", inline=False)
+
     await _play_anim_then_finalize(
         inter,
         title="🗑️ Fouiller",
