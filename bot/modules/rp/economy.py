@@ -18,7 +18,7 @@ except Exception:
         return 0
 
 # ───────── Équilibrage (centimes) ─────────
-MENDIER_COOLDOWN_S  = 60 * 60         # 1h
+MENDIER_COOLDOWN_S  = 60 * 30         # 1h
 FOUILLER_COOLDOWN_S = 60 * 60 * 24    # 24h
 MENDIER_DAILY_CAP   = 10              # 10/jour
 FOUILLER_DAILY_CAP  = 1               # 1/jour
