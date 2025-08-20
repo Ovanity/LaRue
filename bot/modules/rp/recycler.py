@@ -1,8 +1,9 @@
 # bot/modules/rp/recycler.py
 from __future__ import annotations
 from typing import Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, UTC, timedelta
 from zoneinfo import ZoneInfo
+import time
 
 import discord
 from discord import app_commands, Interaction
@@ -16,11 +17,10 @@ TZ_NAME               = "Europe/Paris"
 DAY_START_HOUR        = 8                 # la "journée" démarre à 08:00 locale
 BACKLOG_MAX_DAYS      = 3                 # rattrapage max
 CANETTES_PAR_SAC      = 50
-TAX_BP                = 500               # 5% (basis points)
 STREAK_BONUS_BP       = 800               # +8%/jour de streak
 STREAK_CAP_DAYS       = 7
 
-# Valeur brute d'1 sac par niveau (L1→L3). Tu pourras en ajouter plus tard.
+# Valeur de base d'1 sac par niveau (L1→L3). Tu pourras en ajouter plus tard.
 SAC_VALUE_BY_LEVEL = {
     1: 120,   # 1,20 €
     2: 180,   # 1,80 €
@@ -28,29 +28,44 @@ SAC_VALUE_BY_LEVEL = {
 }
 
 # ───────────────────────────────────────────────────────────────────
-# Petits utilitaires date/stock
+# Dates / reset (style economy)
 # ───────────────────────────────────────────────────────────────────
 def _today_key() -> int:
-    """
-    Renvoie un entier AAAAMMJJ basé sur un "jour" qui commence à DAY_START_HOUR dans TZ_NAME.
-    """
+    """Entier AAAAMMJJ basé sur un 'jour' qui commence à DAY_START_HOUR dans TZ_NAME."""
     now = datetime.now(ZoneInfo(TZ_NAME))
     start = now.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
     if now < start:
         start -= timedelta(days=1)
     return int(start.strftime("%Y%m%d"))
 
+def _reset_window_epochs(tz_name: str = TZ_NAME, hour: int = DAY_START_HOUR) -> tuple[int, int]:
+    """
+    Renvoie (start_epoch_utc, next_epoch_utc) pour la fenêtre quotidienne courante.
+    Début à hour:00 locale, fin le lendemain à la même heure.
+    """
+    now_local = datetime.now(ZoneInfo(tz_name))
+    start_local = now_local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if now_local < start_local:
+        start_local -= timedelta(days=1)
+    next_local = start_local + timedelta(days=1)
+    return (
+        int(start_local.astimezone(UTC).timestamp()),
+        int(next_local.astimezone(UTC).timestamp())
+    )
+
+def _next_reset_epoch(tz_name: str = TZ_NAME, hour: int = DAY_START_HOUR) -> int:
+    """Prochain reset quotidien (epoch UTC)."""
+    _, nxt = _reset_window_epochs(tz_name, hour)
+    return nxt
+
 def _diff_days_key(d1_key: int, d2_key: int) -> int:
-    # convertit AAAAMMJJ → datetime (à DAY_START_HOUR), calcule la diff
     z = ZoneInfo(TZ_NAME)
     d1 = datetime.strptime(str(d1_key), "%Y%m%d").replace(tzinfo=z, hour=DAY_START_HOUR)
     d2 = datetime.strptime(str(d2_key), "%Y%m%d").replace(tzinfo=z, hour=DAY_START_HOUR)
     return (d2 - d1).days
 
 def _pending_days(state: dict) -> int:
-    """
-    Combien de jours de claim disponibles (rattrapage compris, capped).
-    """
+    """Combien de jours de claim disponibles (rattrapage compris, capped)."""
     today = _today_key()
     last  = int(state["last_day"] or 0)
     if last <= 0:
@@ -58,16 +73,37 @@ def _pending_days(state: dict) -> int:
     diff = max(0, _diff_days_key(last, today))
     return min(diff, BACKLOG_MAX_DAYS)
 
-def _current_net_value_per_sac(level: int, streak: int) -> Tuple[int, int, int]:
+# ───────────────────────────────────────────────────────────────────
+# UI helpers (progress/cooldown style economy)
+# ───────────────────────────────────────────────────────────────────
+def _progress_bar(elapsed: int, total: int, width: int = 10) -> tuple[str, int]:
+    if total <= 0:
+        return "──────────", 100
+    pct = max(0.0, min(1.0, elapsed / total))
+    filled = int(round(pct * width))
+    return "█" * filled + "─" * (width - filled), int(pct * 100)
+
+def _reset_field() -> tuple[str, str]:
     """
-    Retourne (gross, tax, net) pour 1 sac au niveau donné avec le streak actuel (cap appliqué).
+    Renvoie (titre, valeur) pour un champ 'Prochain reset', avec barre de progression
+    entre le début de la fenêtre courante (08:00) et le prochain reset.
     """
+    start_ep, next_ep = _reset_window_epochs()
+    now = int(time.time())
+    elapsed = max(0, now - start_ep)
+    total   = max(1, next_ep - start_ep)
+    bar, pct = _progress_bar(elapsed, total)
+    val = f"⏳ Prêt {f'<t:{next_ep}:R>'} • <t:{next_ep}:T>\n`{bar}` {pct}%"
+    return "🕗 Prochain reset", val
+
+# ───────────────────────────────────────────────────────────────────
+# Valeur des sacs (UX simplifiée)
+# ───────────────────────────────────────────────────────────────────
+def _value_per_sac(level: int, streak: int) -> int:
+    """Valeur NETTE d'un sac : base × (1 + bonus_streak)."""
     base = int(SAC_VALUE_BY_LEVEL.get(level, SAC_VALUE_BY_LEVEL[1]))
-    eff_streak = min(max(0, streak), STREAK_CAP_DAYS)
-    gross = int(round(base * (1 + (STREAK_BONUS_BP * eff_streak) / 10000)))
-    tax   = int(round(gross * TAX_BP / 10000))
-    net   = max(0, gross - tax)
-    return gross, tax, net
+    eff = min(max(0, streak), STREAK_CAP_DAYS)
+    return int(round(base * (1 + (STREAK_BONUS_BP * eff) / 10000)))
 
 # ───────────────────────────────────────────────────────────────────
 # Embeds
@@ -75,29 +111,37 @@ def _current_net_value_per_sac(level: int, streak: int) -> Tuple[int, int, int]:
 def _embed_statut(storage, uid: int) -> discord.Embed:
     st = storage.get_recycler_state(uid)
     pend = _pending_days(st)
-    gross, tax, net = _current_net_value_per_sac(st["level"], st["streak"])
+    per_sac = _value_per_sac(st["level"], st["streak"])
+    bonus_pct = int((STREAK_BONUS_BP * min(st["streak"], STREAK_CAP_DAYS)) / 100)  # en %
 
     streak_bar = "🟩" * min(st["streak"], STREAK_CAP_DAYS) + "⬛" * max(0, STREAK_CAP_DAYS - st["streak"])
     e = discord.Embed(
         title="♻️ Recyclerie de canettes",
-        description="Transforme **canettes** → **sacs** → **cash** chaque jour.",
+        description=(
+            "Chaque jour **à partir de 08:00** : tu peux *encaisser* **1 jour** "
+            "(consomme **1 sac**). Le bonus augmente avec ta **série**."
+        ),
         color=discord.Color.dark_teal(),
     )
     e.add_field(name="🧺 Sacs prêts",        value=str(st["sacs"]),     inline=True)
     e.add_field(name="🥤 Canettes en vrac",  value=str(st["canettes"]), inline=True)
-    e.add_field(name="⏳ Jours à encaisser", value=str(pend),            inline=True)
+    e.add_field(name="⏳ Jours à encaisser", value=f"**{pend}**\n*(1 sac/jour)*", inline=True)
 
     e.add_field(
-        name="💰 Valeur par sac (net)",
-        value=f"**{fmt_eur(net)}**  *(brut {fmt_eur(gross)} − taxe {fmt_eur(tax)})*",
+        name="💰 Valeur par sac si tu encaisses maintenant",
+        value=f"**{fmt_eur(per_sac)}**  *(bonus série : +{bonus_pct}%)*",
         inline=False
     )
     e.add_field(
         name="🔥 Série (streak)",
-        value=f"{st['streak']}/{STREAK_CAP_DAYS}  {streak_bar}",
+        value=f"**{st['streak']} / {STREAK_CAP_DAYS}**  {streak_bar}",
         inline=False
     )
-    e.set_footer(text=f"{CANETTES_PAR_SAC} canettes = 1 sac • rattrapage max {BACKLOG_MAX_DAYS} j")
+    # champ reset type cooldown
+    name, val = _reset_field()
+    e.add_field(name=name, value=val, inline=False)
+
+    e.set_footer(text=f"{CANETTES_PAR_SAC} canettes = 1 sac • rattrapage max {BACKLOG_MAX_DAYS} j • reset 08:00")
     return e
 
 def _embed_collect_result(was_claimed: int, paid_total_cents: int, new_state: dict) -> discord.Embed:
@@ -109,7 +153,7 @@ def _embed_collect_result(was_claimed: int, paid_total_cents: int, new_state: di
     e.add_field(name="💵 Cash reçu",      value=f"**{fmt_eur(paid_total_cents)}**", inline=True)
     e.add_field(name="🧺 Sacs restants",  value=str(new_state["sacs"]),             inline=True)
     e.add_field(name="🔥 Série (streak)", value=str(new_state["streak"]),           inline=True)
-    e.set_footer(text="Reviens demain à partir de 08:00 (heure Paris).")
+    e.set_footer(text="Reviens demain (après 08:00, heure Paris) pour garder ta série.")
     return e
 
 def _embed_compresser_result(nb_sacs: int, canettes_consommees: int, st: dict) -> discord.Embed:
@@ -121,6 +165,18 @@ def _embed_compresser_result(nb_sacs: int, canettes_consommees: int, st: dict) -
     e.add_field(name="🧺 Sacs totaux",         value=str(st["sacs"]),     inline=True)
     e.add_field(name="🥤 Canettes restantes",  value=str(st["canettes"]), inline=True)
     e.set_footer(text=f"{CANETTES_PAR_SAC} canettes = 1 sac")
+    return e
+
+def _embed_wait_reset(st: dict) -> discord.Embed:
+    """Embed affiché quand on essaie de collecter trop tôt (avant le reset)."""
+    e = discord.Embed(
+        title="⏳ Trop tôt pour encaisser",
+        description="La caisse rouvre chaque jour à **08:00** (heure Paris).",
+        color=discord.Color.dark_grey()
+    )
+    name, val = _reset_field()
+    e.add_field(name=name, value=val, inline=False)
+    e.add_field(name="🧺 Sacs prêts", value=str(st["sacs"]), inline=True)
     return e
 
 # ───────────────────────────────────────────────────────────────────
@@ -149,43 +205,40 @@ def _craft_sacs_from_canettes(state: dict, nb_souhaite: Optional[int]) -> Tuple[
 
 def _claim_days(storage, uid: int, state: dict, nb: int) -> Tuple[int, int]:
     """
-    Applique jusqu'à 'nb' claims (1 sac/claim, 1 jour/claim).
-    Log chaque jour dans recycler_claims.
-    Retourne (nb_claims_effectués, total_net_pay_cents).
+    Encaisse jusqu'à 'nb' jours (1 sac/claim).
+    Paie avec le streak ACTUEL, puis incrémente.
+    Log dans recycler_claims (gross=net, tax=0).
     """
     today = _today_key()
     paid_total = 0
     done = 0
 
-    # combien de jours dispo + limite sacs
     pend = _pending_days(state)
     nb = max(0, min(nb, pend, state["sacs"]))
     if nb <= 0:
         return 0, 0
 
-    # streak: s'il y a un trou (>1 jour), on reset d'abord
+    # reset streak si trou > 1 jour
     if state["last_day"] > 0:
         miss = _diff_days_key(state["last_day"], today)
         if miss > 1:
             state["streak"] = 0
 
-    # on "simule" jour par jour
     cur_day = state["last_day"] if state["last_day"] else (today - 1)
     for _ in range(nb):
-        # avancer d'un jour
         cur_day += 1
-        # appliquer streak (+1 jusqu'au cap)
-        state["streak"] = min(STREAK_CAP_DAYS, state["streak"] + 1)
 
-        # payer ce jour
-        gross, tax, net = _current_net_value_per_sac(state["level"], state["streak"])
+        # payer avec le streak courant
+        net = _value_per_sac(state["level"], state["streak"])
         paid_total += net
         state["sacs"] = max(0, state["sacs"] - 1)
         done += 1
 
-        # journalisation (anti-abus / analytics)
         if hasattr(storage, "log_recycler_claim"):
-            storage.log_recycler_claim(uid, cur_day, 1, gross, tax, net)
+            storage.log_recycler_claim(uid, cur_day, 1, net, 0, net)
+
+        # incrémenter pour le prochain jour
+        state["streak"] = min(STREAK_CAP_DAYS, state["streak"] + 1)
 
     state["last_day"] = today
     return done, paid_total
@@ -221,8 +274,8 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
         storage.update_recycler_state(inter.user.id, **st)
         await inter.response.send_message(embed=_embed_compresser_result(made, consumed, st))
 
-    @group.command(name="collecter", description="Encaisser (1 sac par jour disponible, rattrapage limité)")
-    @app_commands.describe(nb="Nombre de jours à encaisser (par défaut: 1)")
+    @group.command(name="collecter", description="Encaisser (1 jour dispo = 1 sac consommé)")
+    @app_commands.describe(nb="Nombre de jours à encaisser (défaut: 1)")
     async def collecter(inter: Interaction, nb: Optional[int] = 1):
         storage = inter.client.storage
         if not _require_started(inter):
@@ -234,14 +287,13 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
 
         done, paid = _claim_days(storage, inter.user.id, st, nb)
         if done <= 0:
-            # Feedback précis
             if st["sacs"] <= 0:
-                msg = "🧺 Tu n’as pas de sac prêt."
-            elif _pending_days(st) <= 0:
-                msg = "⏳ Rien à encaisser pour l’instant. Reviens après 08:00."
-            else:
-                msg = "😶 Rien à faire."
-            await inter.response.send_message(msg, ephemeral=True)
+                await inter.response.send_message("🧺 Tu n’as pas de sac prêt.", ephemeral=True)
+                return
+            if _pending_days(st) <= 0:
+                await inter.response.send_message(embed=_embed_wait_reset(st), ephemeral=True)
+                return
+            await inter.response.send_message("😶 Rien à faire.", ephemeral=True)
             return
 
         # crédit monnaie
@@ -276,7 +328,6 @@ def maybe_grant_canettes_after_fouiller(storage, user_id: int, *, prob: float = 
     if hasattr(storage, "add_recycler_canettes"):
         storage.add_recycler_canettes(user_id, add)
     else:
-        # fallback très sûr si l’impl n’a pas encore la méthode (dev)
         st = storage.get_recycler_state(user_id)
         st["canettes"] += add
         storage.update_recycler_state(user_id, **st)
