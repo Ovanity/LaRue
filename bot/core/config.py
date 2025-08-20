@@ -12,3 +12,5 @@ class Settings(BaseModel):
     sync_scope: str = os.getenv("SYNC_SCOPE", "both")
 
 settings = Settings()
+
+#
