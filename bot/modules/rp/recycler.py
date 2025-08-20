@@ -9,6 +9,8 @@ import discord
 from discord import app_commands, Interaction
 
 from bot.modules.common.money import fmt_eur
+from bot.modules.rp.boosts import compute_power
+
 
 # ───────────────────────────────────────────────────────────────────
 # Config recyclerie (centimes)
@@ -318,9 +320,17 @@ def maybe_grant_canettes_after_fouiller(storage, user_id: int, *, prob: float = 
     Appelle-la juste après ta résolution de fouiller().
     """
     import random
-    if random.random() > max(0.0, min(1.0, prob)):
+    power = compute_power(storage, user_id) if callable(compute_power) else {}
+
+    prob_mult = float(power.get("recy_canette_prob_mult", 1.0))
+    roll_bonus = int(power.get("recy_canette_roll_bonus", 0))
+
+    eff_prob = max(0.0, min(0.99, prob * prob_mult))
+    if random.random() > eff_prob:
         return 0
-    add = random.randint(int(roll_min), int(roll_max))
+
+    add = random.randint(int(roll_min), int(roll_max)) + max(0, roll_bonus)
+
     if hasattr(storage, "add_recycler_canettes"):
         storage.add_recycler_canettes(user_id, add)
     else:

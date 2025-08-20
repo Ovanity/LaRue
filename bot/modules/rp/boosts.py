@@ -1,30 +1,43 @@
+# bot/modules/rp/boosts.py
 from __future__ import annotations
-from bot.modules.rp.items import ITEMS
+from bot.modules.rp.items import ITEMS  # même schéma ITEMS que ton shop
 
-def compute_power(storage, user_id: int) -> dict[str, float | int]:
+def compute_power(storage, user_id: int) -> dict:
     """
-    Calcule les bonus cumulés à partir de l’inventaire.
-    - multiplicateurs se multiplient par stack
-    - bonus plats s’additionnent par stack
+    Agrège les bonus de l'inventaire:
+      - *_flat_* : somme
+      - *_mult   : produit
+    Retourne un dict avec des valeurs par défaut sûres.
     """
-    inv = storage.get_inventory(user_id)
-    power: dict[str, float | int] = {
-        "mendier_mult": 1.0,
+    inv = storage.get_inventory(user_id) if hasattr(storage, "get_inventory") else {}
+
+    total = {
         "mendier_flat_min": 0,
         "mendier_flat_max": 0,
+        "fouiller_flat_min": 0,
+        "fouiller_flat_max": 0,
+        "mendier_mult": 1.0,
         "fouiller_mult": 1.0,
     }
-    for item_id, qty in inv.items():
-        it = ITEMS.get(item_id)
-        if not it or qty <= 0:
+
+    for iid, qty in (inv or {}).items():
+        it = ITEMS.get(iid)
+        if not it:
             continue
-        b = it.get("bonus", {})
-        if "mendier_mult" in b:
-            power["mendier_mult"] *= (float(b["mendier_mult"]) ** qty)
-        if "fouiller_mult" in b:
-            power["fouiller_mult"] *= (float(b["fouiller_mult"]) ** qty)
-        if "mendier_flat_min" in b:
-            power["mendier_flat_min"] += int(b["mendier_flat_min"]) * qty
-        if "mendier_flat_max" in b:
-            power["mendier_flat_max"] += int(b["mendier_flat_max"]) * qty
-    return power
+        bonus = it.get("bonus") or {}
+        q = max(0, int(qty))
+
+        # Cap de sécurité: les items "boosts" sont mono-achat (tu l'as déjà garanti côté shop),
+        # mais si jamais, on borne ici aussi à 1.
+        boost_keys = ("mendier_flat_min","mendier_flat_max","mendier_mult",
+                      "fouiller_flat_min","fouiller_flat_max","fouiller_mult")
+        if any(k in bonus for k in boost_keys):
+            q = min(q, 1)
+
+        for k, v in bonus.items():
+            if k.endswith("_mult"):
+                total[k] *= float(v) ** q
+            elif k.endswith("_flat_min") or k.endswith("_flat_max"):
+                total[k] += int(v) * q
+
+    return total

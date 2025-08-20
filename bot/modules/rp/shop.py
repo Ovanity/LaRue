@@ -7,36 +7,48 @@ from bot.modules.common.money import fmt_eur  # formate les centimes en €
 
 shop = app_commands.Group(name="shop", description="Acheter des objets pour booster tes gains.")
 
+# --- Helpers --------------------------------------------------------
+
 def _must_started(storage, user_id: int) -> bool:
     p = storage.get_player(user_id)
     return bool(p and p.get("has_started"))
 
 def _unlock_status(storage, user_id: int, item_def: dict) -> tuple[bool, str]:
-    """
-    Retourne (is_unlocked, details).
-    item_def peut contenir:
-      - "unlock_cmd": {"mendier_count": 10, "fouiller_count": 1, ...}
-    S'il n'y a pas de conditions, on considère l'item débloqué.
-    """
+    """Retourne (débloqué?, label)."""
     reqs: dict[str, int] = item_def.get("unlock_cmd", {}) or {}
     if not reqs:
         return True, "✅ Débloqué"
 
-    parts = []
-    ok_all = True
+    parts, ok_all = [], True
     for stat_key, needed in reqs.items():
-        cur = 0
-        if hasattr(storage, "get_stat"):
-            cur = int(storage.get_stat(user_id, stat_key, 0))
+        cur = int(storage.get_stat(user_id, stat_key, 0)) if hasattr(storage, "get_stat") else 0
         if cur < int(needed):
             ok_all = False
-        # rendu joli: "mendier 7/10"
         label = stat_key.replace("_count", "")
         parts.append(f"{label} {cur}/{int(needed)}")
+    return (True, "✅ Débloqué") if ok_all else (False, "🔒 " + " • ".join(parts))
 
-    if ok_all:
-        return True, "✅ Débloqué"
-    return False, "🔒 " + " • ".join(parts)
+def _max_qty_for_item(it: dict) -> int:
+    """Cap de stack par item."""
+    if "max_qty" in it:
+        return max(1, int(it["max_qty"]))
+    if it.get("one_time"):
+        return 1
+    bonus = it.get("bonus") or {}
+    # Heuristique: s'il booste mendier/fouiller → one-shot
+    boost_keys = (
+        "mendier_flat_min", "mendier_flat_max", "mendier_mult",
+        "fouiller_flat_min", "fouiller_flat_max", "fouiller_mult",
+    )
+    if any(k in bonus for k in boost_keys):
+        return 1
+    return 99  # par défaut: stock quasi illimité
+
+def _fmt_eur_plain(cents: int) -> str:
+    # Les footers d'embed ne rendent pas les emojis custom : on retire tout après la 1re “part”.
+    return fmt_eur(cents).split()[0]
+
+# --- Commands -------------------------------------------------------
 
 @shop.command(name="list", description="Voir la liste des objets disponibles")
 async def shop_list(inter: Interaction):
@@ -48,18 +60,28 @@ async def shop_list(inter: Interaction):
         return
 
     money_cents = storage.get_money(uid)
+    inv = storage.get_inventory(uid)  # {iid: qty}
 
     lines: list[str] = []
     for iid, it in ITEMS.items():
-        price_cents = int(it["price"])  # prix en centimes
+        price_cents = int(it["price"])
         name = it["name"]
         desc = it.get("desc", "")
 
         unlocked, status = _unlock_status(storage, uid, it)
+        owned = int(inv.get(iid, 0))
+        cap = _max_qty_for_item(it)
+
+        if owned >= cap:
+            # Déjà possédé à la limite → on remplace l’état
+            status = "✅ Possédé"
+            buy_hint = "—"
+        else:
+            buy_hint = f"`/shop buy item:{iid}`" if unlocked else ""
 
         lines.append(
             f"**{name}** — **{fmt_eur(price_cents)}**  {status}\n"
-            f"{desc}\n`/shop buy item:{iid}`"
+            f"{desc}\n{buy_hint}"
         )
 
     embed = discord.Embed(
@@ -67,7 +89,7 @@ async def shop_list(inter: Interaction):
         description="\n\n".join(lines) if lines else "Rien pour l’instant.",
         color=discord.Color.green(),
     )
-    embed.set_footer(text=f"Ton solde: {fmt_eur(money_cents)}")
+    embed.set_footer(text=f"Ton solde: {_fmt_eur_plain(money_cents)}")
     await inter.response.send_message(embed=embed, ephemeral=False)
 
 @shop.command(name="buy", description="Acheter un objet du shop")
@@ -86,7 +108,14 @@ async def shop_buy(inter: Interaction, item: str):
         await inter.response.send_message("❌ Objet inconnu. Essaye `/shop list`.", ephemeral=True)
         return
 
-    # Vérifier le déblocage par compteurs
+    # Cap/possession
+    cap = _max_qty_for_item(it)
+    owned = int(storage.get_inventory(uid).get(iid, 0))
+    if owned >= cap:
+        await inter.response.send_message("🛑 Tu possèdes déjà cet objet (limite atteinte).", ephemeral=True)
+        return
+
+    # Déblocage
     unlocked, status = _unlock_status(storage, uid, it)
     if not unlocked:
         await inter.response.send_message(
@@ -95,10 +124,10 @@ async def shop_buy(inter: Interaction, item: str):
         )
         return
 
+    # Paiement
     price_cents = int(it["price"])
     have_cents = storage.get_money(uid)
-
-    if not storage.try_spend(uid, price_cents):  # dépense en centimes
+    if not storage.try_spend(uid, price_cents):
         need = max(0, price_cents - have_cents)
         await inter.response.send_message(
             f"💸 Il te manque **{fmt_eur(need)}**. Prix: **{fmt_eur(price_cents)}**",
@@ -106,6 +135,7 @@ async def shop_buy(inter: Interaction, item: str):
         )
         return
 
+    # Ajout inventaire (unité par unité)
     storage.add_item(uid, iid, 1)
     new_balance = storage.get_money(uid)
     await inter.response.send_message(
@@ -123,7 +153,7 @@ async def shop_inventory(inter: Interaction):
         await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
         return
 
-    inv = storage.get_inventory(uid)  # {iid: qty}
+    inv = storage.get_inventory(uid)
     if not inv:
         await inter.response.send_message("🧺 Inventaire vide. Va voir `/shop list`.", ephemeral=True)
         return
@@ -131,7 +161,9 @@ async def shop_inventory(inter: Interaction):
     lines: list[str] = []
     for iid, qty in inv.items():
         it = ITEMS.get(iid, {"name": iid})
-        lines.append(f"**{it['name']}** × {qty}")
+        cap = _max_qty_for_item(it)
+        cap_txt = f" (max {cap})" if cap < 99 else ""
+        lines.append(f"**{it['name']}** × {qty}{cap_txt}")
 
     money_cents = storage.get_money(uid)
     embed = discord.Embed(
@@ -139,7 +171,7 @@ async def shop_inventory(inter: Interaction):
         description="\n".join(lines),
         color=discord.Color.blurple()
     )
-    embed.set_footer(text=f"Solde: {fmt_eur(money_cents)}")
+    embed.set_footer(text=f"Solde: {_fmt_eur_plain(money_cents)}")
     await inter.response.send_message(embed=embed, ephemeral=False)
 
 def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None):
