@@ -1,4 +1,3 @@
-# client.py
 from __future__ import annotations
 import logging, importlib, inspect
 import discord
@@ -22,33 +21,34 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 client.storage = storage
 
-# ── Scope de sync: "global", "guild", "both"
-SYNC_SCOPE = getattr(settings, "sync_scope", "both")  # change ça si tu veux
-TEST_GUILD_ID = getattr(settings, "guild_id", None)
+# ── Guilds de test (supporte 1..n guilds)
+TEST_GUILD_IDS = getattr(settings, "test_guild_ids", None) or ([getattr(settings, "guild_id", None)] if getattr(settings, "guild_id", None) else [])
+TEST_GUILDS = [discord.Object(id=g) for g in TEST_GUILD_IDS]
 
 # ═══════════════════════════════════════════════════════════════════
-MODULES = [
-    "bot.modules.system.health",
-    "bot.modules.admin.admin",
+# Où publier chaque module
+MODULES_GLOBAL = [
     "bot.modules.rp.start",
     "bot.modules.rp.economy",
     "bot.modules.rp.shop",
-    "bot.modules.system.sysinfo",
     "bot.modules.rp.tabac",
     "bot.modules.social.profile",
     "bot.modules.rp.recycler",
 ]
 
+MODULES_TEST_ONLY = [
+    "bot.modules.system.health",
+    "bot.modules.admin.admin",
+    "bot.modules.system.sysinfo",
+]
+
+# Utilitaires d’enregistrement
 def _call_with_best_signature(fn, guild_obj_for_register: discord.Object | None):
-    """
-    Appelle register/setup_* en privilégiant un enregistrement GLOBAL :
-    on passe None pour guild_obj_for_register si on veut global.
-    """
     candidates = [
         (tree, guild_obj_for_register, client),
-        (tree, storage, TEST_GUILD_ID),
-        (tree, guild_obj_for_register),
         (tree, storage, guild_obj_for_register),
+        (tree, guild_obj_for_register),
+        (tree, storage, getattr(settings, "guild_id", None)),
         (tree,),
     ]
     for params in candidates:
@@ -62,68 +62,58 @@ def _call_with_best_signature(fn, guild_obj_for_register: discord.Object | None)
 def _register_one_module(dotted: str, guild_obj_for_register: discord.Object | None):
     mod = importlib.import_module(dotted)
     if hasattr(mod, "register") and callable(mod.register):
-        log.info("Register via register(): %s", dotted)
+        log.info("Register via register(): %s (guild=%s)", dotted, getattr(guild_obj_for_register, "id", None))
         return _call_with_best_signature(mod.register, guild_obj_for_register)
 
     setups = [getattr(mod, n) for n in dir(mod) if n.startswith("setup_")]
     if setups:
         for fn in setups:
             if callable(fn):
-                log.info("Register via %s() in %s", fn.__name__, dotted)
+                log.info("Register via %s() in %s (guild=%s)", fn.__name__, dotted, getattr(guild_obj_for_register, "id", None))
                 _call_with_best_signature(fn, guild_obj_for_register)
         return
+
     log.warning("Module %s: ni register() ni setup_* trouvés — ignoré.", dotted)
 
-def _register_modules(guild_obj_for_register: discord.Object | None):
-    for dotted in MODULES:
+def _register_modules_global():
+    # Enregistrement GLOBAL (guild_obj=None)
+    for dotted in MODULES_GLOBAL:
         try:
-            _register_one_module(dotted, guild_obj_for_register)
+            _register_one_module(dotted, None)
         except Exception as e:
-            log.exception("Échec d'enregistrement du module %s: %s", dotted, e)
+            log.exception("Échec d'enregistrement global du module %s: %s", dotted, e)
+
+def _register_modules_test_only():
+    # Enregistrement uniquement sur les guilds de test
+    for dotted in MODULES_TEST_ONLY:
+        for g in TEST_GUILDS:
+            try:
+                _register_one_module(dotted, g)
+            except Exception as e:
+                log.exception("Échec d'enregistrement test-only du module %s sur %s: %s", dotted, g.id, e)
 
 # ═══════════════════════════════════════════════════════════════════
 
 @client.event
 async def on_ready():
-    test_guild = discord.Object(id=TEST_GUILD_ID) if TEST_GUILD_ID else None
+    # 1) Enregistrer les modules
+    _register_modules_global()     # publié en global
+    _register_modules_test_only()  # publié seulement sur les guilds de test
 
-    # 1) Choix d’enregistrement pour les modules
-    # - global / both  -> on passe None aux modules → commandes globales
-    # - guild          -> on passe l’objet guild → commandes limitées à ce serveur
-    if SYNC_SCOPE in ("global", "both"):
-        guild_for_register = None
-    else:  # "guild"
-        guild_for_register = test_guild
-
-    _register_modules(guild_for_register)
-
-    # 2) Sync suivant le scope
+    # 2) SYNC
     try:
-        if SYNC_SCOPE == "global":
-            synced = await tree.sync()             # publie GLOBAL
-            log.info("Synced %d GLOBAL commands: %s", len(synced), [c.name for c in synced])
+        # a) Sync GLOBAL (remplace l’ensemble global → retire aussi les anciennes commandes globales non ré-enregistrées)
+        synced_global = await tree.sync()
+        log.info("Synced %d GLOBAL commands: %s", len(synced_global), [c.name for c in synced_global])
 
-        elif SYNC_SCOPE == "guild":
-            if not test_guild:
-                raise RuntimeError("SYNC_SCOPE=guild mais settings.guild_id est vide.")
-            synced = await tree.sync(guild=test_guild)
-            log.info("Synced %d commands on guild %s: %s",
-                     len(synced), TEST_GUILD_ID, [c.name for c in synced])
-
-        else:  # "both": global publish + copie instant sur le serveur de test
-            # a) Publier GLOBAL (propagation lente côté Discord)
-            g_synced = await tree.sync()
-            log.info("Synced %d GLOBAL commands: %s", len(g_synced), [c.name for c in g_synced])
-
-            # b) Copier les GLOBAL → GUILD pour test instantané
-            if test_guild:
-                tree.copy_global_to(guild=test_guild)
-                y_synced = await tree.sync(guild=test_guild)
-                log.info("Copied & synced %d commands to guild %s: %s",
-                         len(y_synced), TEST_GUILD_ID, [c.name for c in y_synced])
+        # b) Copier les GLOBAL → chaque guild de test pour dispo instant
+        for g in TEST_GUILDS:
+            tree.copy_global_to(guild=g)
+            synced_g = await tree.sync(guild=g)
+            log.info("Copied & synced %d commands to guild %s: %s", len(synced_g), g.id, [c.name for c in synced_g])
 
     except discord.Forbidden as e:
-        log.error("403 Missing Access au sync. Vérifie les scopes d’invitation (applications.commands) et les droits. %s", e)
+        log.error("403 Missing Access au sync. Vérifie l’invite (applications.commands) et les droits. %s", e)
     except Exception as e:
         log.exception("Sync error: %s", e)
 
