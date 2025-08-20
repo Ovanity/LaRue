@@ -31,7 +31,7 @@ class Storage:
     def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[bool, int, int]: ...
     def get_action_state(self, user_id: int, action: str) -> dict: ...
 
-    # stats (NOUVEAU)
+    # stats
     def increment_stat(self, user_id: int, key: str, delta: int = 1) -> int: ...
     def get_stat(self, user_id: int, key: str, default: int = 0) -> int: ...
     def get_stats(self, user_id: int) -> dict[str, int]: ...
@@ -48,6 +48,8 @@ class Storage:
     def add_recycler_canettes(self, user_id: int, qty: int) -> int: ...
     def add_recycler_sacs(self, user_id: int, qty: int) -> int: ...
     def log_recycler_claim(self, user_id: int, day_key: int, sacs_used: int, gross: int, tax: int, net: int) -> None: ...
+
+
 # ───────── Implémentation SQLite
 class SQLiteStorage(Storage):
     def __init__(self, root: str):
@@ -68,103 +70,114 @@ class SQLiteStorage(Storage):
         finally:
             con.close()
 
+    # ── Migrations versionnées (idempotentes)
+    def _apply_migrations(self, con: sqlite3.Connection) -> None:
+        (ver,) = con.execute("PRAGMA user_version").fetchone()
+        ver = int(ver or 0)
+
+        # v1 — schéma de base
+        if ver < 1:
+            con.executescript("""
+            -- Joueurs
+            CREATE TABLE IF NOT EXISTS players (
+                user_id     TEXT PRIMARY KEY,
+                has_started INTEGER NOT NULL DEFAULT 0 CHECK (has_started IN (0,1)),
+                money       INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_players_money ON players(money DESC);
+
+            -- Cooldowns / quotas
+            CREATE TABLE IF NOT EXISTS actions (
+                user_id  TEXT NOT NULL,
+                action   TEXT NOT NULL,
+                last_ts  INTEGER NOT NULL DEFAULT 0,
+                day      TEXT NOT NULL DEFAULT '',
+                count    INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, action)
+            );
+            CREATE INDEX IF NOT EXISTS idx_actions_day ON actions(day);
+
+            -- Inventaire
+            CREATE TABLE IF NOT EXISTS inventory (
+                user_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                qty     INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, item_id)
+            );
+
+            -- Stats
+            CREATE TABLE IF NOT EXISTS stats (
+                user_id TEXT NOT NULL,
+                key     TEXT NOT NULL,
+                value   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, key)
+            );
+
+            -- Profils
+            CREATE TABLE IF NOT EXISTS profiles (
+                user_id    TEXT PRIMARY KEY,
+                bio        TEXT NOT NULL DEFAULT '',
+                color_hex  TEXT NOT NULL DEFAULT 'FFD166',
+                title      TEXT NOT NULL DEFAULT '',
+                cred       INTEGER NOT NULL DEFAULT 0,
+                created_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+            );
+
+            -- Respect 1/jour/par paire
+            CREATE TABLE IF NOT EXISTS respect_log (
+                user_id TEXT NOT NULL,  -- reçoit
+                from_id TEXT NOT NULL,  -- donne
+                day     TEXT NOT NULL,  -- YYYY-MM-DD
+                delta   INTEGER NOT NULL,
+                ts      INTEGER NOT NULL,
+                PRIMARY KEY (user_id, from_id, day)
+            );
+            """)
+            con.execute("PRAGMA user_version=1")
+            ver = 1
+
+        # v2 — recyclerie
+        if ver < 2:
+            con.executescript("""
+            -- État par joueur
+            CREATE TABLE IF NOT EXISTS recycler_state (
+                user_id    TEXT PRIMARY KEY,
+                level      INTEGER NOT NULL DEFAULT 1,
+                canettes   INTEGER NOT NULL DEFAULT 0,
+                sacs       INTEGER NOT NULL DEFAULT 0,
+                streak     INTEGER NOT NULL DEFAULT 0,
+                last_day   INTEGER NOT NULL DEFAULT 0, -- AAAAMMJJ (jour logique 08:00)
+                updated_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+            );
+
+            -- Journal des encaissements
+            CREATE TABLE IF NOT EXISTS recycler_claims (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id   TEXT NOT NULL,
+                day_key   INTEGER NOT NULL,  -- AAAAMMJJ encaissé
+                sacs_used INTEGER NOT NULL,
+                gross     INTEGER NOT NULL,
+                tax       INTEGER NOT NULL,
+                net       INTEGER NOT NULL,
+                ts        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                UNIQUE(user_id, day_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_recycler_claims_user ON recycler_claims(user_id);
+            """)
+            con.execute("PRAGMA user_version=2")
+            ver = 2
+
+        # v3 — exemple d’index utile
+        if ver < 3:
+            con.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_actions_user_day ON actions(user_id, day);
+            """)
+            con.execute("PRAGMA user_version=3")
+            ver = 3
+
     def _init_db(self):
         with self._conn() as con:
-            # Joueurs
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS players (
-                    user_id     TEXT PRIMARY KEY,
-                    has_started INTEGER NOT NULL DEFAULT 0 CHECK (has_started IN (0,1)),
-                    money       INTEGER NOT NULL DEFAULT 0
-                );
-            """)
-            con.execute("CREATE INDEX IF NOT EXISTS idx_players_money ON players(money DESC);")
-
-            # Cooldowns / quotas
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS actions (
-                    user_id  TEXT NOT NULL,
-                    action   TEXT NOT NULL,
-                    last_ts  INTEGER NOT NULL DEFAULT 0,
-                    day      TEXT NOT NULL DEFAULT '',
-                    count    INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (user_id, action)
-                );
-            """)
-            con.execute("CREATE INDEX IF NOT EXISTS idx_actions_day ON actions(day);")
-
-            # Inventaire
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS inventory (
-                    user_id TEXT NOT NULL,
-                    item_id TEXT NOT NULL,
-                    qty     INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (user_id, item_id)
-                );
-            """)
-
-            # Stats (NOUVEAU) — pour compter les usages, paliers, etc.
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS stats (
-                    user_id TEXT NOT NULL,
-                    key     TEXT NOT NULL,
-                    value   INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (user_id, key)
-                );
-            """)
-
-            # Profils
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS profiles (
-                    user_id   TEXT PRIMARY KEY,
-                    bio       TEXT NOT NULL DEFAULT '',
-                    color_hex TEXT NOT NULL DEFAULT 'FFD166',
-                    title     TEXT NOT NULL DEFAULT '',
-                    cred      INTEGER NOT NULL DEFAULT 0,
-                    created_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-                );
-            """)
-
-            # Respect 1/jour/par paire (from -> to)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS respect_log (
-                    user_id TEXT NOT NULL,  -- reçoit
-                    from_id TEXT NOT NULL,  -- donne
-                    day     TEXT NOT NULL,  -- YYYY-MM-DD (même logique que _today_str)
-                    delta   INTEGER NOT NULL,
-                    ts      INTEGER NOT NULL,
-                    PRIMARY KEY (user_id, from_id, day)
-                );
-            """)
-
-            # Recyclerie — état courant par joueur
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS recycler_state (
-                    user_id    TEXT PRIMARY KEY,
-                    level      INTEGER NOT NULL DEFAULT 1,
-                    canettes   INTEGER NOT NULL DEFAULT 0,
-                    sacs       INTEGER NOT NULL DEFAULT 0,
-                    streak     INTEGER NOT NULL DEFAULT 0,
-                    last_day   INTEGER NOT NULL DEFAULT 0, -- AAAAMMJJ (jour logique 08:00)
-                    updated_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-                );
-            """)
-
-            # Journal des encaissements (debug/anti-abus/analytics)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS recycler_claims (
-                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id   TEXT NOT NULL,
-                    day_key   INTEGER NOT NULL,  -- AAAAMMJJ encaissé
-                    sacs_used INTEGER NOT NULL,
-                    gross     INTEGER NOT NULL,
-                    tax       INTEGER NOT NULL,
-                    net       INTEGER NOT NULL,
-                    ts        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-                    UNIQUE(user_id, day_key)
-                );
-            """)
-            con.execute("CREATE INDEX IF NOT EXISTS idx_recycler_claims_user ON recycler_claims(user_id);")
+            self._apply_migrations(con)
 
     # ── API joueurs
     def get_player(self, user_id: int) -> Player:
@@ -333,7 +346,7 @@ class SQLiteStorage(Storage):
             con.execute("UPDATE players SET money = money - ? WHERE user_id=?", (amt, uid))
         return True
 
-    # ── Stats (paliers / progression)
+    # ── Stats
     def increment_stat(self, user_id: int, key: str, delta: int = 1) -> int:
         """Incrémente et retourne la nouvelle valeur."""
         uid = str(user_id)
@@ -375,7 +388,7 @@ class SQLiteStorage(Storage):
         with self._conn() as con:
             con.execute("DELETE FROM stats;")
 
-    # ── Profils ─────────────────────────────────────────────────────────
+    # ── Profils
     def get_profile(self, user_id: int) -> dict:
         uid = str(user_id)
         with self._conn() as con:
@@ -407,7 +420,7 @@ class SQLiteStorage(Storage):
             """, (uid, p.get("bio", ""), p.get("color_hex", "FFD166"), p.get("title", ""), int(p.get("cred", 0))))
         return p
 
-    # ── Respect (1/jour/par paire) ─────────────────────────────────────
+    # ── Respect (1/jour/par paire)
     def can_give_respect(self, from_id: int, to_id: int) -> tuple[bool, str | None]:
         if from_id == to_id:
             return False, "😅 Tu peux pas te respecter toi-même."
@@ -451,7 +464,7 @@ class SQLiteStorage(Storage):
             ).fetchall()
         return [(uid, int(cred)) for (uid, cred) in rows]
 
-    # ── Recyclerie ──────────────────────────────────────────────────────
+    # ── Recyclerie
     def get_recycler_state(self, user_id: int) -> dict:
         uid = str(user_id)
         with self._conn() as con:
@@ -469,9 +482,7 @@ class SQLiteStorage(Storage):
             }
 
     def update_recycler_state(self, user_id: int, **fields) -> dict:
-        # merge avec l’état courant + UPSERT
         st = self.get_recycler_state(user_id)
-        # ne garder que les clés connues
         allowed = {"level", "canettes", "sacs", "streak", "last_day"}
         for k, v in list(fields.items()):
             if k in allowed:
