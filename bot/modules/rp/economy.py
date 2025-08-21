@@ -184,7 +184,6 @@ async def _play_anim_then_finalize(
 # ───────── Actions “moteur” (centimes) ─────────
 def mendier_action(storage, user_id: int) -> dict:
     # calcule le delta (gain) mais NE TOUCHE PAS à la DB
-    p = storage.get_player(user_id)
     base = random.randint(MENDIER_MIN_CENTS, MENDIER_MAX_CENTS)
     power = compute_power(storage, user_id)
     flat_min = int(power.get("mendier_flat_min", 0))
