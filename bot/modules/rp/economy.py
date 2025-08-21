@@ -196,19 +196,22 @@ def mendier_action(storage, user_id: int) -> dict:
 
 def fouiller_action(storage, user_id: int) -> dict:
     # calcule seulement le delta (gain / neutre / perte), sans toucher la DB
-    p = storage.get_player(user_id)
     power = compute_power(storage, user_id)
     mult = float(power.get("fouiller_mult", 1.0))
     r = random.random()
+
     if r < 0.6:
         gain = int(round(random.randint(FOUILLER_GOOD_MIN, FOUILLER_GOOD_MAX) * mult))
         delta = gain
     elif r < 0.9:
         delta = 0
     else:
-        perte = min(FOUILLER_BAD_LOSS, p["money"])
-        delta = -perte
-    return {"delta": delta}
+        # !!! caper la perte sur le solde RÉEL (ledger), pas players.money
+        have = int(storage.get_money(user_id))   # ← utilise balance()
+        perte_cap = min(FOUILLER_BAD_LOSS, max(0, have))
+        delta = -perte_cap
+
+    return {"delta": int(delta)}
 
 
 def poches_action(storage, user_id: int) -> discord.Embed:
