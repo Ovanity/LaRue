@@ -3,36 +3,63 @@
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── core
+│   │   ├── __init__.py
 │   │   ├── client.py
 │   │   ├── config.py
+│   │   ├── db
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   └── migrations
+│   │   │       ├── __init__.py
+│   │   │       ├── v0001_base.py
+│   │   │       ├── v0002_recycler.py
+│   │   │       ├── v0003_idx.py
+│   │   │       └── v0004_ledger.py
 │   │   ├── storage.py
 │   │   └── utils.py
-│   └── modules
+│   ├── domain
+│   │   ├── __init__.py
+│   │   ├── clock.py
+│   │   ├── economy.py
+│   │   └── quotas.py
+│   ├── modules
+│   │   ├── __init__.py
+│   │   ├── admin
+│   │   │   └── admin.py
+│   │   ├── common
+│   │   │   ├── __init__.py
+│   │   │   ├── checks.py
+│   │   │   ├── money.py
+│   │   │   └── ui.py
+│   │   ├── rp
+│   │   │   ├── __init__.py
+│   │   │   ├── betting.py
+│   │   │   ├── boosts.py
+│   │   │   ├── combat.py
+│   │   │   ├── economy.py
+│   │   │   ├── items.py
+│   │   │   ├── profile.py
+│   │   │   ├── recycler.py
+│   │   │   ├── shop.py
+│   │   │   ├── start.py
+│   │   │   └── tabac.py
+│   │   ├── social
+│   │   │   └── profile.py
+│   │   └── system
+│   │       ├── health.py
+│   │       └── sysinfo.py
+│   └── persistence
 │       ├── __init__.py
-│       ├── admin
-│       │   └── admin.py
-│       ├── common
-│       │   ├── __init__.py
-│       │   └── money.py
-│       ├── rp
-│       │   ├── __init__.py
-│       │   ├── betting.py
-│       │   ├── boosts.py
-│       │   ├── combat.py
-│       │   ├── economy.py
-│       │   ├── items.py
-│       │   ├── profile.py
-│       │   ├── recycler.py
-│       │   ├── shop.py
-│       │   ├── start.py
-│       │   └── tabac.py
-│       ├── social
-│       │   └── profile.py
-│       └── system
-│           ├── health.py
-│           └── sysinfo.py
+│       ├── actions.py
+│       ├── inventory.py
+│       ├── ledger.py
+│       ├── players.py
+│       ├── profiles.py
+│       ├── recycler.py
+│       ├── respect.py
+│       └── stats.py
 ├── data
 ├── requirements.txt
 └── tree.txt
 
-10 directories, 26 files
+14 directories, 49 files
