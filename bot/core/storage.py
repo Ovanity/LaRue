@@ -5,6 +5,7 @@ from ..core.db.migrations import migrate_if_needed
 from ..domain import clock, quotas, economy
 from ..persistence import players, inventory, stats, profiles, respect, recycler
 from ..persistence import actions as actions_repo
+from bot.domain.economy import balance
 
 class Player(TypedDict, total=False):
     has_started: bool
@@ -74,7 +75,7 @@ class SQLiteStorage(Storage):
         inventory.add_item(str(user_id), item_id, int(qty))
 
     def get_money(self, user_id: int) -> int:
-        return players.get_or_create(str(user_id))["money"]
+        return int(balance(user_id))
 
     def try_spend(self, user_id: int, amount: int) -> bool:
         amt = int(amount)
