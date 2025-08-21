@@ -151,7 +151,6 @@ def _result_embed(
     )
 
     if show_money:
-        gain = fmt_eur(delta_cents)
         total = fmt_eur(total_cents)
         e.add_field(name="💸 Gain", value=f"**{_fmt_delta(delta_cents)}**", inline=True)
         e.add_field(name="💰 Capital", value=f"**{total}**", inline=True)
