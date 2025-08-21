@@ -21,8 +21,13 @@
 │       │   ├── combat.py
 │       │   ├── economy.py
 │       │   ├── items.py
+│       │   ├── profile.py
+│       │   ├── recycler.py
 │       │   ├── shop.py
-│       │   └── start.py
+│       │   ├── start.py
+│       │   └── tabac.py
+│       ├── social
+│       │   └── profile.py
 │       └── system
 │           ├── health.py
 │           └── sysinfo.py
@@ -30,4 +35,4 @@
 ├── requirements.txt
 └── tree.txt
 
-9 directories, 22 files
+10 directories, 26 files

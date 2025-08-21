@@ -65,6 +65,7 @@ class SQLiteStorage(Storage):
             con.execute("PRAGMA journal_mode=WAL;")
             con.execute("PRAGMA synchronous=NORMAL;")
             con.execute("PRAGMA foreign_keys=ON;")
+            con.execute("PRAGMA busy_timeout=5000;")
             yield con
             con.commit()
         finally:
@@ -175,6 +176,24 @@ class SQLiteStorage(Storage):
             con.execute("PRAGMA user_version=3")
             ver = 3
 
+
+        # v4 — journal des transactions (audit)
+        if ver < 4:
+            con.executescript("""
+            CREATE TABLE IF NOT EXISTS ledger (
+                user_id TEXT NOT NULL,
+                key     TEXT NOT NULL,                -- idempotency key (facultatif au début)
+                delta   INTEGER NOT NULL,             -- +crédits / -débits (centimes)
+                reason  TEXT NOT NULL DEFAULT '',
+                ts      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (user_id, key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ledger_user_ts ON ledger(user_id, ts);
+            """)
+            con.execute("PRAGMA user_version=4")
+            ver = 4
+
+
     def _init_db(self):
         with self._conn() as con:
             self._apply_migrations(con)
@@ -221,31 +240,42 @@ class SQLiteStorage(Storage):
     def add_money(self, user_id: int, amount: int) -> Player:
         uid = str(user_id)
         amt = int(amount)
+
+        # --- audit: chaque crédit/débit est journalisé
+        # key aléatoire pour le moment; ajouterons une vraie idempotence plus tard
+        rand = int(time.time() * 1_000_000) % 1_000_000_000
+        audit_key = f"auto:{rand}"
         with self._conn() as con:
+            # s’assure que le joueur existe
             con.execute(
-                "INSERT INTO players(user_id, has_started, money) VALUES(?, 0, 0) ON CONFLICT(user_id) DO NOTHING",
+                "INSERT INTO players(user_id, has_started, money) VALUES(?, 0, 0) "
+                "ON CONFLICT(user_id) DO NOTHING",
                 (uid,)
             )
+            # journalise l’opération (si collision improbable sur la clé, on réessaie)
+            try:
+                con.execute(
+                    "INSERT OR IGNORE INTO ledger(user_id, key, delta, reason) VALUES(?,?,?,?)",
+                    (uid, audit_key, amt, "add_money")
+                )
+                if con.total_changes == 0:
+                    # évite une collision rare de clé auto: re-tente avec une autre clé
+                    audit_key = f"auto:{rand}:{time.time_ns()}"
+                    con.execute(
+                        "INSERT OR IGNORE INTO ledger(user_id, key, delta, reason) VALUES(?,?,?,?)",
+                        (uid, audit_key, amt, "add_money")
+                    )
+            except sqlite3.OperationalError:
+                # si 'ledger' n'existe pas encore (ancienne DB), on ignore l’audit
+                pass
+
+            # applique la modification de solde
             con.execute("UPDATE players SET money = money + ? WHERE user_id = ?", (amt, uid))
             row = con.execute(
                 "SELECT has_started, money FROM players WHERE user_id = ?",
                 (uid,)
             ).fetchone()
         return {"has_started": bool(int(row[0])), "money": int(row[1])}
-
-    def top_richest(self, limit: int = 10) -> list[tuple[str, int]]:
-        with self._conn() as con:
-            rows = con.execute(
-                """
-                SELECT user_id, money
-                FROM players
-                WHERE has_started = 1
-                ORDER BY money DESC, user_id ASC
-                LIMIT ?
-                """,
-                (int(limit),)
-            ).fetchall()
-        return [(user_id, int(money)) for (user_id, money) in rows]
 
     def count_players(self) -> int:
         with self._conn() as con:
