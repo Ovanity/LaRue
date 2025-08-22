@@ -1,7 +1,13 @@
+# bot/core/db/base.py
+from __future__ import annotations
 import os, sqlite3, threading
 from contextlib import contextmanager
 
-DATA_DIR = os.getenv("DATA_DIR", "./data")  # en dev: ./data-dev
+# 👉 Suivre STRICTEMENT la config (dotenv déjà chargé dans config.py)
+from bot.core.config import settings
+
+# Résoudre un chemin absolu (évite les surprises avec ./)
+DATA_DIR = os.path.abspath(settings.data_dir)
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "larue.db")
 
@@ -35,3 +41,7 @@ def atomic(con=None, immediate=True):
     except Exception:
         con.execute("ROLLBACK;")
         raise
+
+# Petit helper debug (à logger au boot ou via /debug)
+def current_db_path() -> str:
+    return DB_PATH
