@@ -1,7 +1,6 @@
 # 👾LaRue.exe — DEV
 
-<!-- Badges principaux -->
-![![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![discord.py](https://img.shields.io/badge/discord.py-app__commands-green)
 ![DB](https://img.shields.io/badge/SQLite-WAL-lightgrey)
 ![Platform](https://img.shields.io/badge/Env-DEV-orange)
