@@ -74,3 +74,20 @@ def debit_once(user_id: int, amount: int, key: str, reason: str = "") -> int:
     if amount <= 0:
         raise ValueError("amount must be > 0")
     return credit_once(user_id, -int(amount), key, reason or "debit")
+
+def top_richest(limit: int = 10) -> list[tuple[str, int]]:
+    """
+    Classement par solde.
+    - Si le ledger est dispo: SUM(delta) GROUP BY user_id, tri desc.
+    - Sinon: fallback legacy players.top_richest().
+    """
+    if _LEDGER_AVAILABLE:
+        try:
+            # nécessite une petite fonction côté persistence/ledger
+            return [(uid, int(bal)) for uid, bal in Ledger.top_richest(int(limit))]  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    try:
+        return Players.top_richest(limit=int(limit))
+    except Exception:
+        return []

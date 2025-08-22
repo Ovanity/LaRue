@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 from bot.modules.rp.boosts import compute_power
 from bot.modules.common.money import fmt_eur
 from bot.domain.economy import credit_once, debit_once
+from bot.domain.economy import top_richest as eco_top_richest
+
 
 # ── NEW: hook recyclerie (no-op si absent)
 try:
@@ -357,8 +359,7 @@ def register(tree: app_commands.CommandTree, guild_obj: discord.Object | None, c
 
     @hess.command(name="classement", description="Top 10 des joueurs les plus chargés")
     async def classement(inter: Interaction):
-        storage = inter.client.storage
-        rows = storage.top_richest(limit=10) if hasattr(storage, "top_richest") else []
+        rows = eco_top_richest(limit=10)
         if not rows:
             await inter.response.send_message(
                 "Aucun joueur classé pour l’instant. Fais **/start** puis **/hess mendier**.",
