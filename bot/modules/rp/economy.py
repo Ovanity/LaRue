@@ -218,23 +218,16 @@ def fouiller_action(storage, user_id: int) -> dict:
 
 
 def poches_action(storage, user_id: int) -> discord.Embed:
-    money_cents = storage.get_money(user_id)
-
-    # DEBUG: fichier SQLite réellement ouvert par le bot
-    with get_conn() as con:
-        db_file = con.execute("PRAGMA database_list;").fetchone()[2]
-
-    # DEBUG: lis aussi la somme ledger pour ce user
-    (led_sum,) = con.execute(
-        "SELECT COALESCE(SUM(delta),0) FROM ledger WHERE user_id=?",
-        (str(user_id),)
-    ).fetchone()
+    # pour le test, on lit la source de vérité directe
+    money_cents = balance(user_id)
+    led = _sum_ledger(str(user_id))
+    players_money = storage.get_player(user_id)["money"]
 
     e = discord.Embed(
         description=f"En fouillant un peu, t’arrives à racler : **{fmt_eur(money_cents)}**",
         color=discord.Color.dark_gold()
     )
-    e.set_footer(text=f"abs_db={db_file} • cwd={os.getcwd()} • ledger={fmt_eur(int(led_sum))}")
+    e.set_footer(text=f"data_dir={settings.data_dir} • ledger={fmt_eur(led)} • players={fmt_eur(players_money)}")
     return e
 
 # ───────── Flows publics pour réutilisation (Start, autres UIs) ─────────
