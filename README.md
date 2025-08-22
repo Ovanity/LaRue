@@ -1,5 +1,16 @@
 # 👾LaRue.exe — DEV
 
+<!-- Badges principaux -->
+![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
+![discord.py](https://img.shields.io/badge/discord.py-app__commands-green)
+![DB](https://img.shields.io/badge/SQLite-WAL-lightgrey)
+![Platform](https://img.shields.io/badge/Env-DEV-orange)
+
+<!-- Badges GitHub (dynamiques) -->
+![Last commit](https://img.shields.io/github/last-commit/<owner>/<repo>/dev)
+![Commits (dev)](https://img.shields.io/github/commit-activity/m/<owner>/<repo>)
+![Issues](https://img.shields.io/github/issues/<owner>/<repo>
+
 Ce dépôt correspond à la branche **dev** (environnement de test).  
 Voici l’arborescence actuelle (générée depuis `tree.txt`) :
 
