@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 from bot.modules.rp.boosts import compute_power
 from bot.modules.common.money import fmt_eur
 from bot.domain.economy import credit_once, debit_once, balance as ledger_balance
+from bot.core.config import settings
+from bot.domain.economy import balance
+from bot.persistence.ledger import sum_balance as _sum_ledger
 
 
 # ── NEW: hook recyclerie (no-op si absent)
@@ -213,19 +216,16 @@ def fouiller_action(storage, user_id: int) -> dict:
 
 
 def poches_action(storage, user_id: int) -> discord.Embed:
-    # Lire explicitement le solde du ledger (source de vérité)
-    money_cents = int(ledger_balance(user_id))
+    # pour le test, on lit la source de vérité directe
+    money_cents = balance(user_id)
+    led = _sum_ledger(str(user_id))
+    players_money = storage.get_player(user_id)["money"]
+
     e = discord.Embed(
         description=f"En fouillant un peu, t’arrives à racler : **{fmt_eur(money_cents)}**",
         color=discord.Color.dark_gold()
     )
-    # DEBUG facultatif : afficher players.money s'il diffère (pour traquer un fallback legacy)
-    try:
-        legacy = int(storage.get_player(user_id)["money"])
-        if legacy != money_cents:
-            e.set_footer(text=f"debug: ledger={fmt_eur(money_cents)} • players={fmt_eur(legacy)}")
-    except Exception:
-        pass
+    e.set_footer(text=f"data_dir={settings.data_dir} • ledger={fmt_eur(led)} • players={fmt_eur(players_money)}")
     return e
 
 # ───────── Flows publics pour réutilisation (Start, autres UIs) ─────────
