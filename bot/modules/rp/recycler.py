@@ -10,6 +10,7 @@ from discord import app_commands, Interaction
 
 from bot.modules.common.money import fmt_eur
 from bot.modules.rp.boosts import compute_power
+from bot.domain.economy import credit_once
 
 
 # ───────────────────────────────────────────────────────────────────
@@ -294,14 +295,18 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             await inter.response.send_message("😶 Rien à faire.", ephemeral=True)
             return
 
-        # crédit monnaie
-        if hasattr(storage, "add_money"):
-            storage.add_money(inter.user.id, paid)
-        else:
-            p = storage.get_player(inter.user.id)
-            storage.update_player(inter.user.id, money=int(p["money"]) + paid)
+        # 💵 Crédit monnaie via ledger (idempotent par interaction)
+        credit_once(
+            inter.user.id,
+            int(paid),
+            key=f"recycler:{inter.id}:collect",
+            reason="recycler.collect"
+        )
 
+        # Persiste le nouvel état recyclerie (sacs/streak/last_day…)
         storage.update_recycler_state(inter.user.id, **st)
+
+        # Affiche le résultat
         await inter.response.send_message(embed=_embed_collect_result(done, paid, st))
 
     # Enregistre le groupe
