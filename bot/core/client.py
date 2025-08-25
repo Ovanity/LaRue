@@ -23,7 +23,33 @@ client.storage = storage
 
 # ── Guilds de test (supporte 1..n guilds)
 SYNC_SCOPE = settings.sync_scope
-TEST_GUILD_IDS = getattr(settings, "test_guild_ids", None) or ([getattr(settings, "guild_id", None)] if getattr(settings, "guild_id", None) else [])
+
+def _list_from_env(var: str) -> list[int]:
+    import os
+    raw = os.getenv(var, "").strip()
+    if not raw:
+        return []
+    out: list[int] = []
+    for part in raw.split(","):
+        s = part.strip()
+        if s.isdigit():
+            out.append(int(s))
+    return out
+
+# Par défaut, AUCUNE guilde de test en mode global (prod).
+# On n’active des guilds de test que si SYNC_SCOPE != "global".
+if SYNC_SCOPE in ("guild", "both"):
+    # Priorité à TEST_GUILD_IDS (comma-separated). Sinon fallback sur GUILD_ID unique.
+    env_ids = _list_from_env("TEST_GUILD_IDS")
+    if env_ids:
+        TEST_GUILD_IDS = env_ids
+    elif getattr(settings, "guild_id", 0):
+        TEST_GUILD_IDS = [int(settings.guild_id)]
+    else:
+        TEST_GUILD_IDS = []
+else:
+    TEST_GUILD_IDS = []
+
 TEST_GUILDS = [discord.Object(id=g) for g in TEST_GUILD_IDS]
 
 # ═══════════════════════════════════════════════════════════════════
@@ -111,17 +137,20 @@ async def on_ready():
 
     try:
         if SYNC_SCOPE == "global":
-            # 1) Enregistre GLOBAL uniquement ce qui doit l’être
-            _register_modules_global()          # guild=None
-            _register_modules_test_only()       # health/admin/sysinfo sur guilds de test
-            # 2) Sync GLOBAL
-            synced_global = await tree.sync()
-            log.info("Synced %d GLOBAL commands: %s", len(synced_global), [c.name for c in synced_global])
-            # 3) Copie les globales sur les guilds de test pour test instantané
-            for g in TEST_GUILDS:
-                tree.copy_global_to(guild=g)
-                synced_g = await tree.sync(guild=g)
-                log.info("Copied & synced %d commands to guild %s: %s", len(synced_g), g.id, [c.name for c in synced_g])
+            _register_modules_global()
+            _register_modules_test_only()  # ok: ces modules ne s’enregistrent que si TEST_GUILDS non vide
+            g_synced = await tree.sync()
+            log.info("Synced %d GLOBAL commands: %s", len(g_synced), [c.name for c in g_synced])
+
+            # ❌ Ne plus copier automatiquement en prod
+            # Si tu tiens à copier pour des tests rapides, active via un flag d'env :
+            import os
+            if os.getenv("COPY_GLOBAL_TO_TEST", "0") == "1" and TEST_GUILDS:
+                for g in TEST_GUILDS:
+                    tree.copy_global_to(guild=g)
+                    y_synced = await tree.sync(guild=g)
+                    log.info("Copied & synced %d commands to guild %s: %s",
+                             len(y_synced), g.id, [c.name for c in y_synced])
 
         elif SYNC_SCOPE == "guild":
             if not TEST_GUILDS:
