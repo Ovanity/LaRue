@@ -9,6 +9,13 @@ from zoneinfo import ZoneInfo
 
 from bot.modules.rp.boosts import compute_power
 from bot.modules.common.money import fmt_eur
+from bot.domain.economy import credit_once, debit_once, balance as ledger_balance
+from bot.core.config import settings
+from bot.domain.economy import balance
+from bot.persistence.ledger import sum_balance as _sum_ledger
+from bot.core.db.base import get_conn
+import os
+
 
 # ── NEW: hook recyclerie (no-op si absent)
 try:
@@ -150,10 +157,8 @@ def _result_embed(
     )
 
     if show_money:
-        gain = fmt_eur(delta_cents)
-        total = fmt_eur(total_cents)
         e.add_field(name="💸 Gain", value=f"**{_fmt_delta(delta_cents)}**", inline=True)
-        e.add_field(name="💰 Capital", value=f"**{total}**", inline=True)
+        e.add_field(name="💰 Capital", value=f"**{fmt_eur(total_cents)}**", inline=True)
 
     if show_cooldown:
         name, val = _cooldown_field(storage, user_id, action_key, cooldown_s, cap)
@@ -182,7 +187,7 @@ async def _play_anim_then_finalize(
 
 # ───────── Actions “moteur” (centimes) ─────────
 def mendier_action(storage, user_id: int) -> dict:
-    p = storage.get_player(user_id)
+    # calcule le delta (gain) mais NE TOUCHE PAS à la DB
     base = random.randint(MENDIER_MIN_CENTS, MENDIER_MAX_CENTS)
     power = compute_power(storage, user_id)
     flat_min = int(power.get("mendier_flat_min", 0))
@@ -190,42 +195,40 @@ def mendier_action(storage, user_id: int) -> dict:
     flat = random.randint(flat_min, max(flat_min, flat_max)) if flat_max > 0 else 0
     mult = float(power.get("mendier_mult", 1.0))
     amount = max(1, int(round((base + flat) * mult)))
-    if hasattr(storage, "add_money"):
-        pp = storage.add_money(user_id, amount)
-    else:
-        pp = storage.update_player(user_id, money=p["money"] + amount)
-    if hasattr(storage, "increment_stat"):
-        storage.increment_stat(user_id, "mendier_count", 1)
-    return {"money": pp["money"], "delta": amount}
+    return {"delta": amount}
 
 def fouiller_action(storage, user_id: int) -> dict:
-    p = storage.get_player(user_id)
+    # calcule seulement le delta (gain / neutre / perte), sans toucher la DB
     power = compute_power(storage, user_id)
     mult = float(power.get("fouiller_mult", 1.0))
     r = random.random()
+
     if r < 0.6:
         gain = int(round(random.randint(FOUILLER_GOOD_MIN, FOUILLER_GOOD_MAX) * mult))
-        if hasattr(storage, "add_money"):
-            pp = storage.add_money(user_id, gain)
-        else:
-            pp = storage.update_player(user_id, money=p["money"] + gain)
-        res = {"money": pp["money"], "delta": gain}
+        delta = gain
     elif r < 0.9:
-        res = {"money": p["money"], "delta": 0}
+        delta = 0
     else:
-        perte = min(FOUILLER_BAD_LOSS, p["money"])
-        pp = storage.update_player(user_id, money=max(0, p["money"] - perte))
-        res = {"money": pp["money"], "delta": -perte}
-    if hasattr(storage, "increment_stat"):
-        storage.increment_stat(user_id, "fouiller_count", 1)
-    return res
+        # !!! caper la perte sur le solde RÉEL (ledger), pas players.money
+        have = int(storage.get_money(user_id))   # ← utilise balance()
+        perte_cap = min(FOUILLER_BAD_LOSS, max(0, have))
+        delta = -perte_cap
+
+    return {"delta": int(delta)}
+
 
 def poches_action(storage, user_id: int) -> discord.Embed:
-    money_cents = storage.get_money(user_id)
-    return discord.Embed(
+    # pour le test, on lit la source de vérité directe
+    money_cents = balance(user_id)
+    led = _sum_ledger(str(user_id))
+    players_money = storage.get_player(user_id)["money"]
+
+    e = discord.Embed(
         description=f"En fouillant un peu, t’arrives à racler : **{fmt_eur(money_cents)}**",
         color=discord.Color.dark_gold()
     )
+    e.set_footer(text=f"data_dir={settings.data_dir} • ledger={fmt_eur(led)} • players={fmt_eur(players_money)}")
+    return e
 
 # ───────── Flows publics pour réutilisation (Start, autres UIs) ─────────
 async def play_mendier(inter: Interaction, *, storage=None) -> bool:
@@ -239,12 +242,21 @@ async def play_mendier(inter: Interaction, *, storage=None) -> bool:
         await inter.response.send_message(msg, ephemeral=True)
         return False
     res = mendier_action(storage, inter.user.id)
+    amount = int(res["delta"])
+
+    # idempotent: une seule application par interaction
+    new_money = credit_once(inter.user.id, amount, key=f"mendier:{inter.id}", reason="mendier")
+
+    # stat (une seule fois ici, après succès)
+    if hasattr(storage, "increment_stat"):
+        storage.increment_stat(inter.user.id, "mendier_count", 1)
+
     final_embed = _result_embed(
         title="Mendier",
         icon="🥖",
         flavor="« Merci chef… la rue te sourit un peu aujourd’hui. »",
-        delta_cents=res["delta"],
-        total_cents=res["money"],
+        delta_cents=amount,
+        total_cents=new_money,  # ← utilise le solde renvoyé
         color=discord.Color.blurple(),
         storage=storage,
         user_id=inter.user.id,
@@ -280,19 +292,28 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
     # ── NEW: loot de canettes
     drop = maybe_grant_canettes_after_fouiller(storage, inter.user.id)  # int
 
-    # Texte / couleur selon issue argent (couleur du RÉSULTAT)
-    if res["delta"] > 0:
+    delta = int(res["delta"])
+
+    # applique l'argent de façon idempotente
+    if delta > 0:
+        new_money = credit_once(inter.user.id, delta, key=f"fouiller:{inter.id}:gain", reason="fouiller")
         flavor = "🧳 Entre canettes et cartons… un truc revendable !"
         result_color = discord.Color.green()
-    elif res["delta"] == 0:
+    elif delta == 0:
+        new_money = storage.get_money(inter.user.id)  # inchangé
         flavor = "🗑️ Bruit, odeur, rats… et rien au fond."
         result_color = discord.Color.gold()
     else:
+        new_money = debit_once(inter.user.id, -delta, key=f"fouiller:{inter.id}:loss", reason="fouiller.loss")
         flavor = "🙄 Mauvaise rencontre. Le trottoir t’a coûté des sous."
         result_color = discord.Color.red()
 
+    # stat (une seule fois ici)
+    if hasattr(storage, "increment_stat"):
+        storage.increment_stat(inter.user.id, "fouiller_count", 1)
+
     # Si canettes uniquement (pas d’argent), on n’affiche pas “Gain/Capital”
-    canettes_only = (drop > 0 and res["delta"] == 0)
+    canettes_only = (drop > 0 and delta == 0)
     if canettes_only:
         flavor = f"♻️ Tas de canettes récupérées : **+{drop}** (à compresser)"
 
@@ -300,9 +321,9 @@ async def play_fouiller(inter: Interaction, *, storage=None) -> bool:
         title="Fouiller",
         icon="🗑️",
         flavor=flavor,
-        delta_cents=res["delta"],
-        total_cents=res["money"],
-        color=result_color,           # ← couleur uniquement sur le résultat
+        delta_cents=delta,
+        total_cents=new_money,  # ← utilise le nouveau solde
+        color=result_color,
         storage=storage,
         user_id=inter.user.id,
         action_key="fouiller",

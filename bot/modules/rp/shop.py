@@ -3,7 +3,8 @@ import discord
 from discord import app_commands, Interaction
 
 from bot.modules.rp.items import ITEMS
-from bot.modules.common.money import fmt_eur  # formate les centimes en €
+from bot.modules.common.money import fmt_eur
+from bot.domain.economy import debit_once  # ← NEW
 
 shop = app_commands.Group(name="shop", description="Acheter des objets pour booster tes gains.")
 
@@ -14,11 +15,9 @@ def _must_started(storage, user_id: int) -> bool:
     return bool(p and p.get("has_started"))
 
 def _unlock_status(storage, user_id: int, item_def: dict) -> tuple[bool, str]:
-    """Retourne (débloqué?, label)."""
     reqs: dict[str, int] = item_def.get("unlock_cmd", {}) or {}
     if not reqs:
         return True, "✅ Débloqué"
-
     parts, ok_all = [], True
     for stat_key, needed in reqs.items():
         cur = int(storage.get_stat(user_id, stat_key, 0)) if hasattr(storage, "get_stat") else 0
@@ -29,23 +28,20 @@ def _unlock_status(storage, user_id: int, item_def: dict) -> tuple[bool, str]:
     return (True, "✅ Débloqué") if ok_all else (False, "🔒 " + " • ".join(parts))
 
 def _max_qty_for_item(it: dict) -> int:
-    """Cap de stack par item."""
     if "max_qty" in it:
         return max(1, int(it["max_qty"]))
     if it.get("one_time"):
         return 1
     bonus = it.get("bonus") or {}
-    # Heuristique: s'il booste mendier/fouiller → one-shot
     boost_keys = (
         "mendier_flat_min", "mendier_flat_max", "mendier_mult",
         "fouiller_flat_min", "fouiller_flat_max", "fouiller_mult",
     )
     if any(k in bonus for k in boost_keys):
         return 1
-    return 99  # par défaut: stock quasi illimité
+    return 99
 
 def _fmt_eur_plain(cents: int) -> str:
-    # Les footers d'embed ne rendent pas les emojis custom : on retire tout après la 1re “part”.
     return fmt_eur(cents).split()[0]
 
 # --- Commands -------------------------------------------------------
@@ -60,7 +56,7 @@ async def shop_list(inter: Interaction):
         return
 
     money_cents = storage.get_money(uid)
-    inv = storage.get_inventory(uid)  # {iid: qty}
+    inv = storage.get_inventory(uid)
 
     lines: list[str] = []
     for iid, it in ITEMS.items():
@@ -73,7 +69,6 @@ async def shop_list(inter: Interaction):
         cap = _max_qty_for_item(it)
 
         if owned >= cap:
-            # Déjà possédé à la limite → on remplace l’état
             status = "✅ Possédé"
             buy_hint = "—"
         else:
@@ -110,8 +105,8 @@ async def shop_buy(inter: Interaction, item: str):
 
     # Cap/possession
     cap = _max_qty_for_item(it)
-    owned = int(storage.get_inventory(uid).get(iid, 0))
-    if owned >= cap:
+    owned_before = int(storage.get_inventory(uid).get(iid, 0))
+    if owned_before >= cap:
         await inter.response.send_message("🛑 Tu possèdes déjà cet objet (limite atteinte).", ephemeral=True)
         return
 
@@ -124,19 +119,25 @@ async def shop_buy(inter: Interaction, item: str):
         )
         return
 
-    # Paiement
+    # Paiement — simple et idempotent via ledger
     price_cents = int(it["price"])
-    have_cents = storage.get_money(uid)
-    if not storage.try_spend(uid, price_cents):
-        need = max(0, price_cents - have_cents)
+    before = storage.get_money(uid)
+    if before < price_cents:
+        need = price_cents - before
         await inter.response.send_message(
             f"💸 Il te manque **{fmt_eur(need)}**. Prix: **{fmt_eur(price_cents)}**",
             ephemeral=True
         )
         return
 
-    # Ajout inventaire (unité par unité)
-    storage.add_item(uid, iid, 1)
+    key = f"shop:{inter.id}:{iid}"
+    after = debit_once(uid, price_cents, key=key, reason=f"shop:{iid}")
+    applied = (after == before - price_cents)  # vrai si le débit vient d’être appliqué
+
+    # Ajout inventaire: seulement si le débit a été réellement appliqué
+    if applied:
+        storage.add_item(uid, iid, 1)
+
     new_balance = storage.get_money(uid)
     await inter.response.send_message(
         f"✅ Achat de **{it['name']}** pour **{fmt_eur(price_cents)}**. "
@@ -165,7 +166,6 @@ async def shop_inventory(inter: Interaction):
         cap_txt = f" (max {cap})" if cap < 99 else ""
         lines.append(f"**{it['name']}** × {qty}{cap_txt}")
 
-    money_cents = storage.get_money(uid)
     embed = discord.Embed(
         title="🧺 Ton inventaire",
         description="\n".join(lines),
