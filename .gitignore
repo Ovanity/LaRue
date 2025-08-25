@@ -18,3 +18,5 @@ data/
 
 # Config PyCharm
 *.iml
+*DS_Store
+
