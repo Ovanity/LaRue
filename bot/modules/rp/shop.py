@@ -4,23 +4,27 @@ from discord import app_commands, Interaction
 
 from bot.modules.rp.items import ITEMS
 from bot.modules.common.money import fmt_eur
-from bot.domain.economy import debit_once  # ← NEW
+from bot.domain import players as d_players
+from bot.domain import stats as d_stats
+from bot.domain import inventory as d_inventory
+from bot.domain import economy as d_economy
 
 shop = app_commands.Group(name="shop", description="Acheter des objets pour booster tes gains.")
 
 # --- Helpers --------------------------------------------------------
 
-def _must_started(storage, user_id: int) -> bool:
-    p = storage.get_player(user_id)
+def _must_started(user_id: int) -> bool:
+    p = d_players.get(user_id)
     return bool(p and p.get("has_started"))
 
-def _unlock_status(storage, user_id: int, item_def: dict) -> tuple[bool, str]:
+def _unlock_status(user_id: int, item_def: dict) -> tuple[bool, str]:
+    """Retourne (débloqué?, message court)."""
     reqs: dict[str, int] = item_def.get("unlock_cmd", {}) or {}
     if not reqs:
         return True, "✅ Débloqué"
     parts, ok_all = [], True
     for stat_key, needed in reqs.items():
-        cur = int(storage.get_stat(user_id, stat_key, 0)) if hasattr(storage, "get_stat") else 0
+        cur = int(d_stats.get(user_id, stat_key, 0))
         if cur < int(needed):
             ok_all = False
         label = stat_key.replace("_count", "")
@@ -48,15 +52,14 @@ def _fmt_eur_plain(cents: int) -> str:
 
 @shop.command(name="list", description="Voir la liste des objets disponibles")
 async def shop_list(inter: Interaction):
-    storage = inter.client.storage
     uid = inter.user.id
 
-    if not _must_started(storage, uid):
+    if not _must_started(uid):
         await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
         return
 
-    money_cents = storage.get_money(uid)
-    inv = storage.get_inventory(uid)
+    money_cents = d_economy.balance(uid)
+    inv = d_inventory.get(uid)
 
     lines: list[str] = []
     for iid, it in ITEMS.items():
@@ -64,7 +67,7 @@ async def shop_list(inter: Interaction):
         name = it["name"]
         desc = it.get("desc", "")
 
-        unlocked, status = _unlock_status(storage, uid, it)
+        unlocked, status = _unlock_status(uid, it)
         owned = int(inv.get(iid, 0))
         cap = _max_qty_for_item(it)
 
@@ -90,10 +93,9 @@ async def shop_list(inter: Interaction):
 @shop.command(name="buy", description="Acheter un objet du shop")
 @app_commands.describe(item="ID de l'objet (ex: cup, sign, dog)")
 async def shop_buy(inter: Interaction, item: str):
-    storage = inter.client.storage
     uid = inter.user.id
 
-    if not _must_started(storage, uid):
+    if not _must_started(uid):
         await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
         return
 
@@ -105,13 +107,13 @@ async def shop_buy(inter: Interaction, item: str):
 
     # Cap/possession
     cap = _max_qty_for_item(it)
-    owned_before = int(storage.get_inventory(uid).get(iid, 0))
+    owned_before = int(d_inventory.get(uid).get(iid, 0))
     if owned_before >= cap:
         await inter.response.send_message("🛑 Tu possèdes déjà cet objet (limite atteinte).", ephemeral=True)
         return
 
     # Déblocage
-    unlocked, status = _unlock_status(storage, uid, it)
+    unlocked, status = _unlock_status(uid, it)
     if not unlocked:
         await inter.response.send_message(
             f"{status}\nTu n’as pas encore déverrouillé **{it['name']}**.",
@@ -119,9 +121,9 @@ async def shop_buy(inter: Interaction, item: str):
         )
         return
 
-    # Paiement — simple et idempotent via ledger
+    # Paiement — idempotent via ledger
     price_cents = int(it["price"])
-    before = storage.get_money(uid)
+    before = d_economy.balance(uid)
     if before < price_cents:
         need = price_cents - before
         await inter.response.send_message(
@@ -130,15 +132,15 @@ async def shop_buy(inter: Interaction, item: str):
         )
         return
 
-    key = f"shop:{inter.id}:{iid}"
-    after = debit_once(uid, price_cents, key=key, reason=f"shop:{iid}")
-    applied = (after == before - price_cents)  # vrai si le débit vient d’être appliqué
+    idem_key = f"shop:{inter.id}:{iid}"
+    after = d_economy.debit_once(uid, price_cents, reason=f"shop:{iid}", idem_key=idem_key)
+    applied = (after == before - price_cents)  # idempotent-safe (si rejoué, ça ne redébite pas)
 
-    # Ajout inventaire: seulement si le débit a été réellement appliqué
+    # Ajout inventaire: seulement si le débit vient d’être appliqué
     if applied:
-        storage.add_item(uid, iid, 1)
+        d_inventory.add_item(uid, iid, 1)
 
-    new_balance = storage.get_money(uid)
+    new_balance = d_economy.balance(uid)
     await inter.response.send_message(
         f"✅ Achat de **{it['name']}** pour **{fmt_eur(price_cents)}**. "
         f"Nouveau solde: **{fmt_eur(new_balance)}**",
@@ -147,14 +149,13 @@ async def shop_buy(inter: Interaction, item: str):
 
 @shop.command(name="inventory", description="Voir ton inventaire")
 async def shop_inventory(inter: Interaction):
-    storage = inter.client.storage
     uid = inter.user.id
 
-    if not _must_started(storage, uid):
+    if not _must_started(uid):
         await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
         return
 
-    inv = storage.get_inventory(uid)
+    inv = d_inventory.get(uid)
     if not inv:
         await inter.response.send_message("🧺 Inventaire vide. Va voir `/shop list`.", ephemeral=True)
         return
