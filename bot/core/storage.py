@@ -1,29 +1,33 @@
-# bot/core/storage.py
+# bot/core/storage.py  — shim de compat (zéro SQL, zéro repo)
 from __future__ import annotations
 from typing import TypedDict, cast
 
-from ..core.db.base import get_conn
-from ..core.db.migrations import migrate_if_needed
-from ..domain import quotas
-from ..persistence import players, inventory, stats, profiles, respect, recycler
-from ..persistence import actions as actions_repo
-from bot.domain.economy import balance
+from bot.domain import quotas
+from bot.domain import economy as d_economy
+from bot.domain import players as d_players
+from bot.domain import inventory as d_inventory
+from bot.domain import stats as d_stats
+from bot.domain import profiles as d_profiles
+from bot.domain import respect as d_respect
+from bot.domain import recycler as d_recycler
+from bot.domain import actions as d_actions
+from bot.domain import admin as d_admin
 
 
 class Player(TypedDict, total=False):
     has_started: bool
-    money: int  # legacy (non utilisé pour le solde effectif)
+    money: int  # legacy, non utilisé pour le solde réel
 
 
 class Storage:
-    # API de stockage (sans argent direct : utiliser credit_once/debit_once)
+    # API de stockage (sans argent direct: utiliser credit_once/debit_once côté domain.economy)
     def get_player(self, user_id: int) -> Player: ...
     def update_player(self, user_id: int, **fields) -> Player: ...
     def count_players(self) -> int: ...
     def get_inventory(self, user_id: int) -> dict[str, int]: ...
     def add_item(self, user_id: int, item_id: str, qty: int = 1) -> None: ...
     def get_money(self, user_id: int) -> int: ...
-    def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int) -> tuple[bool, int, int]: ...
+    def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int): ...
     def get_action_state(self, user_id: int, action: str) -> dict: ...
     def increment_stat(self, user_id: int, key: str, delta: int = 1) -> int: ...
     def get_stat(self, user_id: int, key: str, default: int = 0) -> int: ...
@@ -34,9 +38,9 @@ class Storage:
     def reset_stats(self) -> None: ...
     def get_profile(self, user_id: int) -> dict: ...
     def upsert_profile(self, user_id: int, **fields) -> dict: ...
-    def can_give_respect(self, from_id: int, to_id: int) -> tuple[bool, str | None]: ...
+    def can_give_respect(self, from_id: int, to_id: int): ...
     def give_respect(self, from_id: int, to_id: int) -> int: ...
-    def top_profiles_by_cred(self, limit: int = 10) -> list[tuple[str, int]]: ...
+    def top_profiles_by_cred(self, limit: int = 10): ...
     def get_recycler_state(self, user_id: int) -> dict: ...
     def update_recycler_state(self, user_id: int, **fields) -> dict: ...
     def add_recycler_canettes(self, user_id: int, qty: int) -> int: ...
@@ -46,99 +50,89 @@ class Storage:
 
 class SQLiteStorage(Storage):
     def __init__(self, root: str):
-        # root ignoré: on lit DATA_DIR via base.py
-        with get_conn() as con:
-            migrate_if_needed(con)
+        # Ne fait plus de migrations ni d'accès DB ici.
+        # Les migrations sont déclenchées au boot (voir __main__.py).
+        pass
 
-    # ── Joueurs ────────────────────────────────────────────────────
+    # Joueurs
     def get_player(self, user_id: int) -> Player:
-        return cast(Player, players.get_or_create(str(user_id)))
+        return cast(Player, d_players.get(user_id))
 
     def update_player(self, user_id: int, **fields) -> Player:
-        cur = players.get_or_create(str(user_id))
-        has_started = int(bool(fields.get("has_started", cur["has_started"])))
-        money = int(fields.get("money", cur["money"]))  # legacy
-        return cast(Player, players.upsert(str(user_id), has_started, money))
+        return cast(Player, d_players.update(user_id, **fields))
 
     def count_players(self) -> int:
-        return players.count_players()
+        return d_players.count()
 
-    # ── Inventaire ────────────────────────────────────────────────
+    # Inventaire
     def get_inventory(self, user_id: int) -> dict[str, int]:
-        return inventory.get_inventory(str(user_id))
+        return d_inventory.get(user_id)
 
     def add_item(self, user_id: int, item_id: str, qty: int = 1) -> None:
-        inventory.add_item(str(user_id), item_id, int(qty))
+        d_inventory.add_item(user_id, item_id, qty)
 
-    # ── Argent (source de vérité: ledger via balance()) ───────────
+    # Argent (source de vérité: ledger)
     def get_money(self, user_id: int) -> int:
-        return int(balance(user_id))
+        return int(d_economy.balance(user_id))
 
-    # ── Cooldowns / quotas ────────────────────────────────────────
+    # Cooldowns / quotas
     def check_and_touch_action(self, user_id: int, action: str, cooldown_s: int, daily_cap: int):
         return quotas.check_and_touch(user_id, action, int(cooldown_s), int(daily_cap))
 
     def get_action_state(self, user_id: int, action: str) -> dict:
-        return actions_repo.get_state(str(user_id), action)
+        return d_actions.get_state(user_id, action)
 
-    # ── Stats ─────────────────────────────────────────────────────
+    # Stats
     def increment_stat(self, user_id: int, key: str, delta: int = 1) -> int:
-        return stats.incr(str(user_id), key, int(delta))
+        return d_stats.incr(user_id, key, delta)
 
     def get_stat(self, user_id: int, key: str, default: int = 0) -> int:
-        return stats.get(str(user_id), key, int(default))
+        return d_stats.get(user_id, key, default)
 
     def get_stats(self, user_id: int) -> dict[str, int]:
-        return stats.all_for(str(user_id))
+        return d_stats.all_for(user_id)
 
-    # ── Admin (reset) ─────────────────────────────────────────────
+    # Admin (reset)
     def reset_players(self) -> None:
-        con = get_conn(); con.execute("DELETE FROM players;")
+        d_admin.reset_players()
 
     def reset_actions(self) -> None:
-        con = get_conn(); con.execute("DELETE FROM actions;")
+        d_admin.reset_actions()
 
     def reset_inventory(self) -> None:
-        con = get_conn(); con.execute("DELETE FROM inventory;")
+        d_admin.reset_inventory()
 
     def reset_stats(self) -> None:
-        con = get_conn(); con.execute("DELETE FROM stats;")
+        d_admin.reset_stats()
 
-    # ── Profils / respect ─────────────────────────────────────────
+    # Profils / respect
     def get_profile(self, user_id: int) -> dict:
-        return profiles.get_or_create(str(user_id))
+        return d_profiles.get(user_id)
 
     def upsert_profile(self, user_id: int, **fields) -> dict:
-        return profiles.upsert(str(user_id), **fields)
+        return d_profiles.upsert(user_id, **fields)
 
     def can_give_respect(self, from_id: int, to_id: int):
-        from ..domain.clock import today_key
-        day = today_key()
-        return respect.can_give(str(from_id), str(to_id), day)
+        return d_respect.can_give(from_id, to_id)
 
     def give_respect(self, from_id: int, to_id: int) -> int:
-        from ..domain.clock import today_key
-        return respect.give(str(from_id), str(to_id), today_key())
+        return d_respect.give(from_id, to_id)
 
     def top_profiles_by_cred(self, limit: int = 10):
-        return profiles.top_by_cred(int(limit))
+        return d_profiles.top_by_cred(limit)
 
-    # ── Recyclerie ────────────────────────────────────────────────
+    # Recyclerie
     def get_recycler_state(self, user_id: int) -> dict:
-        return recycler.get_state(str(user_id))
+        return d_recycler.get_state(user_id)
 
     def update_recycler_state(self, user_id: int, **fields) -> dict:
-        return recycler.upsert_state(str(user_id), **fields)
+        return d_recycler.upsert_state(user_id, **fields)
 
     def add_recycler_canettes(self, user_id: int, qty: int) -> int:
-        st = recycler.get_state(str(user_id))
-        st2 = recycler.upsert_state(str(user_id), canettes=st["canettes"] + int(qty))
-        return st2["canettes"]
+        return d_recycler.add_canettes(user_id, qty)
 
     def add_recycler_sacs(self, user_id: int, qty: int) -> int:
-        st = recycler.get_state(str(user_id))
-        st2 = recycler.upsert_state(str(user_id), sacs=st["sacs"] + int(qty))
-        return st2["sacs"]
+        return d_recycler.add_sacs(user_id, qty)
 
     def log_recycler_claim(self, user_id: int, day_key: int, sacs_used: int, gross: int, tax: int, net: int) -> None:
-        recycler.log_claim(str(user_id), int(day_key), int(sacs_used), int(gross), int(tax), int(net))
+        d_recycler.log_claim(user_id, day_key, sacs_used, gross, tax, net)

@@ -6,9 +6,11 @@ from discord.ext import tasks
 
 from .config import settings
 from .storage import SQLiteStorage
+from .db.base import get_conn
+from .db.migrations import migrate_if_needed
 
-# ── Storage
-storage = SQLiteStorage(settings.data_dir)
+# ── Storage (déféré au run)
+storage: SQLiteStorage | None = None
 
 # ── Logging
 log = logging.getLogger("larue")
@@ -19,7 +21,6 @@ intents = discord.Intents.default()
 intents.members = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
-client.storage = storage
 
 # ── Guilds de test (supporte 1..n guilds)
 SYNC_SCOPE = settings.sync_scope
@@ -191,4 +192,14 @@ async def daily_tick():
     log.info("Tick quotidien")
 
 def run():
+    # 1) Migrations au boot (une seule fois)
+    with get_conn() as con:
+        migrate_if_needed(con)
+
+    # 2) Création du storage APRÈS migrations
+    global storage
+    storage = SQLiteStorage(settings.data_dir)
+    client.storage = storage
+
+    # 3) Lancement du client
     client.run(settings.token)
