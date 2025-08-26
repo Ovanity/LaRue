@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Optional
-
 import random
+
 import discord
 from discord import app_commands, Interaction
 
 from bot.modules.common.money import fmt_eur, MONEY_EMOJI_NAME, MONEY_EMOJI_ID
-from bot.domain.economy import balance, debit_once, credit_once
-
-MONEY_PARTIAL = discord.PartialEmoji(name=MONEY_EMOJI_NAME, id=MONEY_EMOJI_ID)
+from bot.domain import economy as d_economy
+from bot.domain import players as d_players
+from bot.domain import stats as d_stats
+from bot.domain import quotas as d_quotas
 
 def _price_plain(cents: int) -> str:
     return fmt_eur(cents).split(" ", 1)[0]
@@ -61,13 +62,12 @@ TABAC_COOLDOWN_S = 5
 DEFAULT_TICKET_KEY = next(iter(TICKETS))
 
 # ── Helpers ────────────────────────────────────────────────────────
-def _touch_cooldown(storage, user_id: int) -> tuple[bool, Optional[str]]:
-    if hasattr(storage, "check_and_touch_action"):
-        ok, wait, _ = storage.check_and_touch_action(user_id, "tabac", TABAC_COOLDOWN_S, 999999)
-        if not ok:
-            available_at = int(time.time()) + int(wait)
-            return False, f"⏳ Doucement… reviens <t:{available_at}:R>."
-    return True, None
+def _touch_cooldown(user_id: int) -> tuple[bool, Optional[str]]:
+    ok, wait, _ = d_quotas.check_and_touch(user_id, "tabac", TABAC_COOLDOWN_S, 999_999)
+    if ok:
+        return True, None
+    available_at = int(time.time()) + int(wait)
+    return False, f"⏳ Doucement… reviens <t:{available_at}:R>."
 
 def _weight_pick_deterministic(pool: list[tuple[int, float]], rng: random.Random) -> int:
     total = float(sum(w for _, w in pool))
@@ -94,29 +94,33 @@ class TabacView(discord.ui.View):
             return False
         return True
 
-    def _base_embed(self, storage) -> discord.Embed:
+    def _base_embed(self) -> discord.Embed:
         if not TICKETS:
-            return discord.Embed(title="🏪 Tabac du quartier",
-                                 description="Aucun ticket disponible pour le moment.",
-                                 color=discord.Color.dark_grey())
+            return discord.Embed(
+                title="🏪 Tabac du quartier",
+                description="Aucun ticket disponible pour le moment.",
+                color=discord.Color.dark_grey(),
+            )
         if self.current_key not in TICKETS:
             self.current_key = next(iter(TICKETS))
 
         t = TICKETS[self.current_key]
-        solde = fmt_eur(storage.get_money(self.owner_id))
+        solde = fmt_eur(d_economy.balance(self.owner_id))
 
-        e = discord.Embed(title=f"{t['emoji']}  {t['name']}",
-                          description=f"_{t['desc']}_",
-                          color=discord.Color.green())
+        e = discord.Embed(
+            title=f"{t['emoji']}  {t['name']}",
+            description=f"_{t['desc']}_",
+            color=discord.Color.green(),
+        )
         e.add_field(name="🎫 Prix", value=fmt_eur(t["price"]), inline=True)
         e.add_field(name="💰 Solde", value=solde, inline=True)
         e.add_field(name="\u200b", value="\u200b", inline=True)
         e.set_footer(text="Appuie sur 🎫 Gratter — rejoue tant que t’as des BiffCoins.")
         return e
 
-    async def refresh_embed(self, storage) -> None:
+    async def refresh_embed(self) -> None:
         if self.message:
-            await self.message.edit(embed=self._base_embed(storage), view=self)
+            await self.message.edit(embed=self._base_embed(), view=self)
 
     def _set_gratter_disabled(self, disabled: bool) -> None:
         for child in self.children:
@@ -129,26 +133,25 @@ class TabacView(discord.ui.View):
             discord.SelectOption(
                 label=f"{TICKETS[k]['name']}",
                 value=k,
-                description=f"Prix : {fmt_eur(TICKETS[k]['price']).split(' ', 1)[0]}",
+                description=f"Prix : {_price_plain(TICKETS[k]['price'])}",
                 emoji=discord.PartialEmoji(name=MONEY_EMOJI_NAME, id=MONEY_EMOJI_ID),
             )
             for k in TICKETS
         ],
-        custom_id="tabac_select"
+        custom_id="tabac_select",
     )
     async def select_ticket(self, inter: Interaction, select: discord.ui.Select):
         if not await self._guard(inter):
             return
         self.current_key = select.values[0]
-        await inter.response.edit_message(embed=self._base_embed(inter.client.storage), view=self)
+        await inter.response.edit_message(embed=self._base_embed(), view=self)
 
     @discord.ui.button(label="🎫 Gratter", style=discord.ButtonStyle.success, custom_id="tabac_gratter")
     async def btn_gratter(self, inter: Interaction, _: discord.ui.Button):
         if not await self._guard(inter):
             return
-        storage = inter.client.storage
 
-        ok_cd, msg_cd = _touch_cooldown(storage, inter.user.id)
+        ok_cd, msg_cd = _touch_cooldown(inter.user.id)
         if not ok_cd:
             await inter.response.send_message(msg_cd or "⏳ Attends un peu.", ephemeral=True)
             return
@@ -161,7 +164,7 @@ class TabacView(discord.ui.View):
 
         t = TICKETS[self.current_key]
         price = int(t["price"])
-        before = storage.get_money(inter.user.id)
+        before = d_economy.balance(inter.user.id)
         if before < price:
             self._locked = False
             self._set_gratter_disabled(False)
@@ -176,8 +179,7 @@ class TabacView(discord.ui.View):
 
         # ── Débit idempotent (ledger)
         bet_key = f"tabac:{inter.id}:{self.current_key}:bet"
-        after_debit = debit_once(inter.user.id, price, key=bet_key, reason=f"tabac.bet:{self.current_key}")
-        applied_bet = (after_debit == before - price)
+        d_economy.debit_once(inter.user.id, price, reason=f"tabac.bet:{self.current_key}", idem_key=bet_key)
 
         # RNG local déterministe (même résultat si Discord rejoue l’interaction)
         rng = random.Random(f"{inter.id}:{self.current_key}")
@@ -239,15 +241,14 @@ class TabacView(discord.ui.View):
                     if c < revealed_cols:
                         line.append(final_rows[r][c])
                     elif spinning_col is not None and c == spinning_col:
-                        # Spin juste visuel (non déterministe, c'est ok)
-                        line.append(random.choice(symbols_pool))
+                        line.append(random.choice(symbols_pool))  # spin visuel
                     else:
                         line.append(cover)
                 lines.append(" ".join(line))
             return "```\n" + "\n".join(lines) + "\n```"
 
         # 2) Animation des colonnes
-        e = self._base_embed(storage)
+        e = self._base_embed()
         e.add_field(name="🎰 Grattage.", value=_render_grid(rows, 0, 0), inline=False)
         if self.message:
             await self.message.edit(embed=e, view=self)
@@ -255,30 +256,29 @@ class TabacView(discord.ui.View):
         for col in range(3):
             for _ in range(5):
                 await asyncio.sleep(0.12)
-                e = self._base_embed(storage)
+                e = self._base_embed()
                 e.add_field(name="🎰 Grattage..", value=_render_grid(rows, col, col), inline=False)
                 if self.message:
                     await self.message.edit(embed=e, view=self)
-            e = self._base_embed(storage)
+            e = self._base_embed()
             e.add_field(name="🎰 Grattage...", value=_render_grid(rows, col + 1, None), inline=False)
             if self.message:
                 await self.message.edit(embed=e, view=self)
 
         # 3) Stat + crédit éventuel (idempotent)
-        if hasattr(storage, "increment_stat"):
-            storage.increment_stat(inter.user.id, "tabac_count", 1)
+        d_stats.incr(inter.user.id, "tabac_count", 1)
 
         if gain_cents > 0:
             win_key = f"tabac:{inter.id}:{self.current_key}:win"
-            credit_once(inter.user.id, gain_cents, key=win_key, reason=f"tabac.win:{self.current_key}")
+            d_economy.credit_once(inter.user.id, gain_cents, reason=f"tabac.win:{self.current_key}", idem_key=win_key)
 
         # 4) Résultat final
-        final_money = storage.get_money(inter.user.id)
-
-        e = self._base_embed(storage)
-        e.add_field(name="🎰 Résultats",
-                    value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
-                    inline=False)
+        e = self._base_embed()
+        e.add_field(
+            name="🎰 Résultats",
+            value="```\n" + "\n".join(" ".join(row) for row in rows) + "\n```",
+            inline=False
+        )
 
         if gain_cents > 0:
             e.color = discord.Color.gold()
@@ -309,13 +309,11 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
     @tree.command(name="tabac", description="Kiosque à tickets à gratter")
     @app_commands.guilds(guild_obj) if guild_obj else (lambda f: f)
     async def tabac(inter: Interaction):
-        storage = inter.client.storage
-        p = storage.get_player(inter.user.id)
-        if not p or not p.get("has_started"):
+        if not d_players.get(inter.user.id).get("has_started"):
             await inter.response.send_message("🚀 Utilise **/start** avant.", ephemeral=True)
             return
 
         view = TabacView(inter.user.id)
-        embed = view._base_embed(storage)
+        embed = view._base_embed()
         await inter.response.send_message(embed=embed, view=view)
         view.message = await inter.original_response()

@@ -1,14 +1,13 @@
+# bot/core/client.py
 from __future__ import annotations
-import logging, importlib, inspect
+import logging, importlib, inspect, os
 import discord
 from discord import app_commands
 from discord.ext import tasks
 
 from .config import settings
-from .storage import SQLiteStorage
-
-# ── Storage
-storage = SQLiteStorage(settings.data_dir)
+from .db.base import get_conn
+from .db.migrations import migrate_if_needed
 
 # ── Logging
 log = logging.getLogger("larue")
@@ -19,13 +18,11 @@ intents = discord.Intents.default()
 intents.members = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
-client.storage = storage
 
 # ── Guilds de test (supporte 1..n guilds)
 SYNC_SCOPE = settings.sync_scope
 
 def _list_from_env(var: str) -> list[int]:
-    import os
     raw = os.getenv(var, "").strip()
     if not raw:
         return []
@@ -36,10 +33,7 @@ def _list_from_env(var: str) -> list[int]:
             out.append(int(s))
     return out
 
-# Par défaut, AUCUNE guilde de test en mode global (prod).
-# On n’active des guilds de test que si SYNC_SCOPE != "global".
 if SYNC_SCOPE in ("guild", "both"):
-    # Priorité à TEST_GUILD_IDS (comma-separated). Sinon fallback sur GUILD_ID unique.
     env_ids = _list_from_env("TEST_GUILD_IDS")
     if env_ids:
         TEST_GUILD_IDS = env_ids
@@ -70,23 +64,11 @@ MODULES_TEST_ONLY = [
 ]
 
 # Utilitaires d’enregistrement
-
-def _register_modules_for_guilds(modules: list[str], guilds: list[discord.Object]):
-    for dotted in modules:
-        for g in guilds:
-            try:
-                _register_one_module(dotted, g)
-            except Exception as e:
-                log.exception("Échec d'enregistrement du module %s sur %s: %s", dotted, getattr(g, "id", None), e)
-
-
 def _call_with_best_signature(fn, guild_obj_for_register: discord.Object | None):
     candidates = [
-        (tree, guild_obj_for_register, client),
-        (tree, storage, guild_obj_for_register),
-        (tree, guild_obj_for_register),
-        (tree, storage, getattr(settings, "guild_id", None)),
-        (tree,),
+        (tree, guild_obj_for_register, client),   # register(tree, guild, client)
+        (tree, guild_obj_for_register),           # register(tree, guild)
+        (tree,),                                  # register(tree)
     ]
     for params in candidates:
         try:
@@ -113,7 +95,6 @@ def _register_one_module(dotted: str, guild_obj_for_register: discord.Object | N
     log.warning("Module %s: ni register() ni setup_* trouvés — ignoré.", dotted)
 
 def _register_modules_global():
-    # Enregistrement GLOBAL (guild_obj=None)
     for dotted in MODULES_GLOBAL:
         try:
             _register_one_module(dotted, None)
@@ -121,7 +102,6 @@ def _register_modules_global():
             log.exception("Échec d'enregistrement global du module %s: %s", dotted, e)
 
 def _register_modules_test_only():
-    # Enregistrement uniquement sur les guilds de test
     for dotted in MODULES_TEST_ONLY:
         for g in TEST_GUILDS:
             try:
@@ -138,13 +118,10 @@ async def on_ready():
     try:
         if SYNC_SCOPE == "global":
             _register_modules_global()
-            _register_modules_test_only()  # ok: ces modules ne s’enregistrent que si TEST_GUILDS non vide
+            _register_modules_test_only()
             g_synced = await tree.sync()
             log.info("Synced %d GLOBAL commands: %s", len(g_synced), [c.name for c in g_synced])
 
-            # ❌ Ne plus copier automatiquement en prod
-            # Si tu tiens à copier pour des tests rapides, active via un flag d'env :
-            import os
             if os.getenv("COPY_GLOBAL_TO_TEST", "0") == "1" and TEST_GUILDS:
                 for g in TEST_GUILDS:
                     tree.copy_global_to(guild=g)
@@ -155,20 +132,14 @@ async def on_ready():
         elif SYNC_SCOPE == "guild":
             if not TEST_GUILDS:
                 raise RuntimeError("SYNC_SCOPE=guild mais aucune guild de test n’est définie.")
-            # 1) IMPORTANT : pas d’enregistrement global ici.
-            # On enregistre TOUT (global + test-only) **sur les guilds de test** uniquement
             _register_modules_for_guilds(MODULES_GLOBAL + MODULES_TEST_ONLY, TEST_GUILDS)
-            # 2) Sync par guilde
             for g in TEST_GUILDS:
                 synced_g = await tree.sync(guild=g)
                 log.info("Synced %d commands on guild %s: %s", len(synced_g), g.id, [c.name for c in synced_g])
 
         else:  # "both"
-            # 1) Global pour prod…
             _register_modules_global()
-            # …et test-only uniquement sur les guilds de test
             _register_modules_test_only()
-            # 2) Sync GLOBAL puis copie instant sur les guilds de test
             g_synced = await tree.sync()
             log.info("Synced %d GLOBAL commands: %s", len(g_synced), [c.name for c in g_synced])
             for g in TEST_GUILDS:
@@ -190,5 +161,18 @@ async def on_ready():
 async def daily_tick():
     log.info("Tick quotidien")
 
+def _register_modules_for_guilds(modules: list[str], guilds: list[discord.Object]):
+    for dotted in modules:
+        for g in guilds:
+            try:
+                _register_one_module(dotted, g)
+            except Exception as e:
+                log.exception("Échec d'enregistrement du module %s sur %s: %s", dotted, getattr(g, "id", None), e)
+
 def run():
+    # 1) Migrations au boot
+    with get_conn() as con:
+        migrate_if_needed(con)
+
+    # 2) Lancement du client
     client.run(settings.token)
