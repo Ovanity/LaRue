@@ -1,20 +1,27 @@
+# bot/modules/social/profile.py — refactor sans storage (domain only)
 from __future__ import annotations
 from typing import Optional
 import discord
 from discord import app_commands, Interaction
+
 from bot.modules.common.money import fmt_eur
+from bot.domain import economy as d_economy
+from bot.domain import players as d_players
+from bot.domain import profiles as d_profiles
+from bot.domain import respect as d_respect
+
+MAX_BIO_LEN = 160
 
 # ─────────────────────────────
 # Utils
 # ─────────────────────────────
 def _color(hexstr: str) -> discord.Color:
     try:
-        return discord.Color(int(hexstr.strip("#"), 16))
+        return discord.Color(int(hexstr.strip().lstrip("#"), 16))
     except Exception:
         return discord.Color.dark_grey()
 
 def _display_name(inter: Interaction, user: discord.abc.User) -> str:
-    # Pseudo serveur si possible, sinon global_name / name
     if inter.guild:
         m = inter.guild.get_member(user.id)
         if m and m.display_name:
@@ -22,7 +29,6 @@ def _display_name(inter: Interaction, user: discord.abc.User) -> str:
     return getattr(user, "global_name", None) or user.name
 
 def _avatar_url(u: discord.abc.User | discord.Member, size: int = 256) -> str:
-    # Thumbnail (plus discret qu'une grande image)
     try:
         return u.display_avatar.with_size(size).url
     except Exception:
@@ -32,7 +38,6 @@ def _avatar_url(u: discord.abc.User | discord.Member, size: int = 256) -> str:
             return ""
 
 async def _get_member(inter: Interaction, user: discord.abc.User) -> Optional[discord.Member]:
-    """Récupère un Member via cache puis API si besoin."""
     if not inter.guild:
         return None
     m = inter.guild.get_member(user.id)
@@ -40,49 +45,51 @@ async def _get_member(inter: Interaction, user: discord.abc.User) -> Optional[di
         return m
     try:
         return await inter.guild.fetch_member(user.id)
-    except (discord.NotFound, discord.HTTPException):
+    except (discord.NotFound, discord.HTTPException, discord.Forbidden):
         return None
 
 def _mask_id(user_id: int) -> str:
     s = str(user_id)
     return f"…{s[-4:]}" if len(s) >= 4 else "…"
 
+async def _require_guild(inter: Interaction) -> bool:
+    if not inter.guild:
+        await inter.response.send_message("❌ Commande uniquement sur le serveur.", ephemeral=True)
+        return False
+    return True
+
+def _has_started(user_id: int) -> bool:
+    p = d_players.get(user_id)
+    return bool(p and p.get("has_started"))
+
 # ─────────────────────────────
 # Embed
 # ─────────────────────────────
-def _embed_profile(inter: Interaction, storage, target: discord.User | discord.Member) -> discord.Embed:
-    prof   = storage.get_profile(target.id)
-    player = storage.get_player(target.id)
+def _embed_profile(inter: Interaction, target: discord.User | discord.Member) -> discord.Embed:
+    prof = d_profiles.get(target.id)
+    name = _display_name(inter, target)
+    balance = d_economy.balance(target.id)  # source de vérité: ledger
+    money_str = fmt_eur(balance)
 
-    name  = _display_name(inter, target)
-    money = fmt_eur(player["money"])
     color = _color(prof.get("color_hex", "FFD166"))
-    bio   = prof.get("bio") or "Aucune bio."
-    cred  = str(int(prof.get("cred", 0)))
+    bio = prof.get("bio") or "Aucune bio."
+    cred = str(int(prof.get("cred", 0)))
     custom_title = prof.get("title") or None
 
-    e = discord.Embed(
-        title=f"🪪 {name}",
-        color=color
-    )
+    e = discord.Embed(title=f"🪪 {name}", color=color)
 
-    # Avatar en haut-droite (thumbnail)
     url = _avatar_url(target, size=256)
     if url:
         e.set_thumbnail(url=url)
 
-    # Ligne stats (compacte, pas de séparateur pleine largeur)
-    e.add_field(name="💰 Capital", value=money, inline=True)
+    e.add_field(name="💰 Capital", value=money_str, inline=True)
     e.add_field(name="🧿 Street Cred", value=cred, inline=True)
 
-    # (optionnel) titre perso
     if custom_title:
         e.add_field(name="🏷️ Titre", value=str(custom_title), inline=False)
 
-    # Section BIO clairement délimitée
     e.add_field(name="📝 Bio", value=bio, inline=False)
 
-    # Footer discret (ID masqué)
     tag = getattr(target, "name", "user")
     e.set_footer(text=f"Profil • {tag} • UID {_mask_id(target.id)}")
     return e
@@ -96,59 +103,47 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
     @group.command(name="voir", description="Afficher un profil (par défaut: toi)")
     @app_commands.describe(user="(optionnel) quelqu’un d’autre du serveur")
     async def voir(inter: Interaction, user: Optional[discord.User] = None):
-        storage = inter.client.storage
-
-        if not inter.guild:
-            await inter.response.send_message("❌ Commande uniquement sur le serveur.", ephemeral=True)
+        if not await _require_guild(inter):
             return
 
         target = user or inter.user
 
-        # Pas de profil pour les bots
         if getattr(target, "bot", False):
             await inter.response.send_message("🤖 Les bots n’ont pas de profil ici.", ephemeral=True)
             return
 
-        # Résolution membre (cache + fetch si besoin)
-        if user is None:
-            member = inter.user if isinstance(inter.user, discord.Member) else (await _get_member(inter, inter.user))
-        else:
-            member = await _get_member(inter, user)
-
+        member = target if isinstance(target, discord.Member) else await _get_member(inter, target)
         if not member:
             await inter.response.send_message("🚧 Cette personne n’est pas sur ce serveur.", ephemeral=True)
             return
 
-        # doit avoir /start
-        tp = storage.get_player(target.id)
-        if not tp or not tp.get("has_started"):
+        if not _has_started(target.id):
             if target.id == inter.user.id:
                 await inter.response.send_message("🚀 Lance **/start** pour créer ton profil.", ephemeral=True)
             else:
                 await inter.response.send_message("ℹ️ Cette personne n’a pas encore commencé (**/start**).", ephemeral=True)
             return
 
-        await inter.response.send_message(embed=_embed_profile(inter, storage, member))
+        await inter.response.send_message(embed=_embed_profile(inter, member))
 
-    @group.command(name="set_bio", description="Définir ta bio (160 max)")
+    @group.command(name="set_bio", description=f"Définir ta bio ({MAX_BIO_LEN} max)")
+    @app_commands.describe(bio="Texte court affiché sur ton profil")
     async def set_bio(inter: Interaction, bio: str):
-        storage = inter.client.storage
-        p = storage.get_player(inter.user.id)
-        if not p or not p.get("has_started"):
+        if not _has_started(inter.user.id):
             await inter.response.send_message("🚀 Lance **/start** avant de modifier ton profil.", ephemeral=True)
             return
-        if len(bio) > 160:
-            await inter.response.send_message("❌ 160 caractères max.", ephemeral=True)
+        if len(bio) > MAX_BIO_LEN:
+            await inter.response.send_message(f"❌ {MAX_BIO_LEN} caractères max.", ephemeral=True)
             return
-        storage.upsert_profile(inter.user.id, bio=bio.strip())
+
+        d_profiles.upsert(inter.user.id, bio=bio.strip())
         await inter.response.send_message("✅ Bio mise à jour.", ephemeral=True)
 
     @group.command(name="respect", description="Donner +1 Street Cred (1/jour par personne)")
+    @app_commands.describe(user="La personne à qui tu donnes du respect")
     async def respect(inter: Interaction, user: discord.User):
-        if not inter.guild:
-            await inter.response.send_message("❌ Commande uniquement sur le serveur.", ephemeral=True)
+        if not await _require_guild(inter):
             return
-
         if user.id == inter.user.id:
             await inter.response.send_message("😅 Tu peux pas te respecter toi-même.", ephemeral=True)
             return
@@ -161,31 +156,26 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             await inter.response.send_message("🚧 Cette personne n’est pas sur ce serveur.", ephemeral=True)
             return
 
-        storage = inter.client.storage
-        tp = storage.get_player(user.id)
-        if not tp or not tp.get("has_started"):
+        if not _has_started(user.id):
             await inter.response.send_message("ℹ️ Cette personne n’a pas encore commencé (**/start**).", ephemeral=True)
             return
 
-        ok, why = storage.can_give_respect(inter.user.id, user.id)
+        ok, why = d_respect.can_give(inter.user.id, user.id)
         if not ok:
             await inter.response.send_message(why or "⏳ Demain.", ephemeral=True)
             return
 
-        new_cred = storage.give_respect(inter.user.id, user.id)
+        new_cred = d_respect.give(inter.user.id, user.id)
         await inter.response.send_message(f"🤝 Respect donné à {user.mention} • Street Cred: **{new_cred}**")
 
     @group.command(name="top", description="Top Street Cred (serveur)")
     async def top(inter: Interaction):
-        if not inter.guild:
-            await inter.response.send_message("❌ Commande uniquement sur le serveur.", ephemeral=True)
+        if not await _require_guild(inter):
             return
 
-        storage = inter.client.storage
-        # on prend un peu plus large puis on filtre (ordre supposé déjà trié côté storage)
-        rows = storage.top_profiles_by_cred(50)
-
+        rows = d_profiles.top_by_cred(50)  # [(user_id:str|int, cred:int)]
         filtered: list[tuple[int, int]] = []
+
         for uid, cred in rows:
             try:
                 uid_i = int(uid)
@@ -193,18 +183,12 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             except Exception:
                 continue
 
-            # 1) cache
-            member = inter.guild.get_member(uid_i)
-            # 2) fallback API si pas en cache
-            if member is None:
-                try:
-                    member = await inter.guild.fetch_member(uid_i)
-                except (discord.NotFound, discord.HTTPException, discord.Forbidden):
-                    continue
-
-            # 3) doit avoir /start
-            p = storage.get_player(uid_i)
-            if not (p and p.get("has_started")):
+            # 1) doit être membre du serveur
+            member = inter.guild.get_member(uid_i) or await _get_member(inter, discord.Object(id=uid_i))  # type: ignore
+            if not member:
+                continue
+            # 2) doit avoir /start
+            if not _has_started(uid_i):
                 continue
 
             filtered.append((uid_i, cred_i))
@@ -215,8 +199,7 @@ def register(tree: app_commands.CommandTree, guild_obj: Optional[discord.Object]
             await inter.response.send_message("Personne n’a encore de créd 😶", ephemeral=True)
             return
 
-        lines = [f"**{i + 1}.** <@{uid}> — **{cred}**"
-                 for i, (uid, cred) in enumerate(filtered)]
+        lines = [f"**{i + 1}.** <@{uid}> — **{cred}**" for i, (uid, cred) in enumerate(filtered)]
         embed = discord.Embed(
             title="🏁 Street Cred — Top 10 (serveur)",
             description="\n".join(lines),
