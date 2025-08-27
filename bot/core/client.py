@@ -11,6 +11,7 @@ from .db.migrations import migrate_if_needed
 
 from bot.core.broadcast import BroadcastService
 from bot.core.broadcast_scheduler import BroadcastTicker
+from bot.core.hourly_planner import HourlyPlanner
 
 # ── Logging
 log = logging.getLogger("larue")
@@ -160,6 +161,7 @@ async def on_ready():
 
     await BroadcastService.init(client)
     BroadcastTicker.start(client)
+    HourlyPlanner.start()
 
     if not daily_tick.is_running():
         daily_tick.start()
