@@ -28,6 +28,7 @@ class HourlyPlanner:
                 # Prochaine "pile d'heure" locale (DST-safe via zoneinfo)
                 next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
                 sleep_s = max(0.0, (next_hour - now).total_seconds())
+                log.info("HourlyPlanner armé: prochain tick à %s (T–%ds)", next_hour.isoformat(), int(sleep_s))
                 await asyncio.sleep(sleep_s)
 
                 # Recalcule à l'éveil (pour précision et DST)
