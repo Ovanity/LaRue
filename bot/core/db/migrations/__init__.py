@@ -1,4 +1,4 @@
-from . import v0001_base, v0002_recycler, v0003_idx, v0004_ledger
+from . import v0001_base, v0002_recycler, v0003_idx, v0004_ledger, v0005_broadcast
 
 def migrate_if_needed(con):
     (ver,) = con.execute("PRAGMA user_version").fetchone()
@@ -12,3 +12,5 @@ def migrate_if_needed(con):
         v0003_idx.apply(con); con.execute("PRAGMA user_version=3"); ver = 3
     if ver < 4:
         v0004_ledger.apply(con); con.execute("PRAGMA user_version=4"); ver = 4
+    if ver < 5:
+        v0005_broadcast.apply(con); con.execute("PRAGMA user_version=5"); ver = 5
