@@ -9,6 +9,9 @@ from .config import settings
 from .db.base import get_conn
 from .db.migrations import migrate_if_needed
 
+from bot.core.broadcast import BroadcastService
+from bot.core.broadcast_scheduler import BroadcastTicker
+
 # ── Logging
 log = logging.getLogger("larue")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -55,6 +58,7 @@ MODULES_GLOBAL = [
     "bot.modules.rp.tabac",
     "bot.modules.social.profile",
     "bot.modules.rp.recycler",
+    "bot.modules.system.news",
 ]
 
 MODULES_TEST_ONLY = [
@@ -152,6 +156,9 @@ async def on_ready():
         log.error("403 Missing Access au sync. Invite le bot sur la/les guild(s) cible(s) avec scope applications.commands. %s", e)
     except Exception as e:
         log.exception("Sync error: %s", e)
+
+    await BroadcastService.init(client)
+    BroadcastTicker.start(client)
 
     if not daily_tick.is_running():
         daily_tick.start()

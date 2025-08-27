@@ -52,3 +52,13 @@ def _row_to_event(row) -> Dict:
         "status": row[6], "jump_url": row[7] or "",
         "created_ts": int(row[8]),
     }
+
+def list_due(now: int, limit: int = 10) -> List[Dict]:
+    con = get_conn()
+    rows = con.execute(
+        "SELECT id,kind,title,starts_at,ends_at,payload_json,status,jump_url,created_ts "
+        "FROM events WHERE status='scheduled' AND starts_at>0 AND starts_at<=? "
+        "ORDER BY starts_at ASC LIMIT ?",
+        (int(now), int(limit))
+    ).fetchall()
+    return [_row_to_event(r) for r in rows]
