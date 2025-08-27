@@ -65,6 +65,7 @@ MODULES_TEST_ONLY = [
     "bot.modules.system.health",
     "bot.modules.admin.admin",
     "bot.modules.system.sysinfo",
+    "bot.modules.system.dev_events"
 ]
 
 # Utilitaires d’enregistrement
